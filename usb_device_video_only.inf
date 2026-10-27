@@ -1,41 +1,19 @@
 ; usb_device_video_only.inf
-; Modificación de usb_device.inf para reclamar SOLO la interfaz 0 (MI_00 = video)
-; y dejar que usbccgp.sys divida el dispositivo y usbaudio.sys tome MI_01/MI_02.
-;
-; Uso:
-;   1. Desinstalar binding actual:  pnputil /delete-driver oem56.inf /uninstall /force
-;   2. Instalar este INF:           pnputil /add-driver usb_device_video_only.inf /install
-;   3. Verificar en Device Manager:  Deberían aparecer 3 nodos hijos bajo el dispositivo compuesto
-;
-; Rollback: volver a instalar el usb_device.inf original (oem56.inf) sobre el nodo padre.
+; Driver nativo WinUSB para la interfaz de video (MI_00) de Sony PlayStation 3 Eye.
+; Deja intacta la interfaz MI_01 para que usbaudio.sys maneje el microfono.
 
 [Version]
 Signature   = "$Windows NT$"
 Class       = "Camera"
 ClassGuid   = {ca3e7ab9-b4c2-4ae6-8251-579ef933890f}
-Provider    = "libwdi"
+Provider    = %VendorName%
 CatalogFile = usb_device.cat
-DriverVer   = 08/09/2018, 6.1.7600.16385
+DriverVer   = 10/27/2026, 1.0.0.0
+PnpLockdown = 1
 
 [Manufacturer]
 %VendorName% = PS3Eye_Device, NTamd64, NTx86, NTarm
 
-; --- NODO PADRE (dispositivo compuesto): NO instalamos function driver ---
-; Dejamos que usb.inf de Microsoft cargue usbccgp.sys como function driver del padre.
-; usbccgp creará los children MI_00, MI_01, MI_02.
-[PS3Eye_Device.NTamd64]
-%DeviceName% = PS3Eye_Parent_Install, USB\VID_1415&PID_2000
-
-[PS3Eye_Device.NTx86]
-%DeviceName% = PS3Eye_Parent_Install, USB\VID_1415&PID_2000
-
-[PS3Eye_Device.NTarm]
-%DeviceName% = PS3Eye_Parent_Install, USB\VID_1415&PID_2000
-
-[PS3Eye_Parent_Install]
-; Sin Include winusb.inf, sin AddService -> usa usbccgp.sys del bus
-
-; --- MI_00 (Video): WinUSB + nuestro Device Interface GUID ---
 [PS3Eye_Device.NTamd64]
 %DeviceName% = USB_Install_Video, USB\VID_1415&PID_2000&MI_00
 
@@ -54,12 +32,11 @@ Include    = winusb.inf
 AddService = WinUSB,0x00000002,WinUSB_ServiceInstall
 
 [WinUSB_ServiceInstall]
-DisplayName     = "WinUSB - PS3 Eye Video"
+DisplayName     = %DeviceName%
 ServiceType     = 1                  ; SERVICE_KERNEL_DRIVER
 StartType       = 3                  ; SERVICE_DEMAND_START
 ErrorControl    = 1                  ; SERVICE_ERROR_NORMAL
 ServiceBinary   = %12%\WinUSB.sys
-LoadOrderGroup  = Base
 
 [USB_Install_Video.HW]
 AddReg = AddDeviceInterfaceGUID
@@ -67,24 +44,7 @@ AddReg = AddDeviceInterfaceGUID
 [AddDeviceInterfaceGUID]
 HKR,,DeviceInterfaceGUIDs,0x10000,%DeviceGUID%
 
-; --- Co-installers y WDF (igual que el original) ---
-[USB_Install_Video.CoInstallers]
-AddReg = CoInstallers_AddReg
-CopyFiles = CoInstallers_CopyFiles
-
-[CoInstallers_AddReg]
-HKR,,CoInstallers32,0x00010000,"WinUSBCoInstaller2.dll"
-
-[CoInstallers_CopyFiles]
-WinUSBCoInstaller2.dll
-WdfCoInstaller01011.dll
-
-[DestinationDirs]
-CoInstallers_CopyFiles = 11
-
-; --- Strings ---
 [Strings]
-VendorName      = "libwdi"
-DeviceName      = "PS3 Eye Camera (Video)"
+VendorName      = "Sony"
+DeviceName      = "PS3 Eye Camera"
 DeviceGUID      = "{4BCC4C51-4249-4AE8-98BF-356B2C530E77}"
-DeviceID        = "VID_1415&PID_2000"
