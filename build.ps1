@@ -141,7 +141,14 @@ try {
     Build-Target -Name 'test_capture_session' -Main 'tests\test_capture_session.c' -ObjDir 'build\tests'
     Build-DShowDll
 
-    # Test DShow COM Filter
+    # Test DShow Render
+    $renderOut = "build\test_dshow_render.exe"
+    $renderSources = @('tests\test_dshow_render.cpp')
+    Write-Host "building $renderOut"
+    & cl.exe @testFlags @renderSources @testLibs /Fe$renderOut
+    if ($LASTEXITCODE -ne 0) {
+        throw "compilation failed for test_dshow_render.exe (exit $LASTEXITCODE)"
+    }
     $testOut = "build\test_dshow_filter.exe"
     $testObj = "build\tests\"
     $testFlags = @('/nologo', '/W4', '/O2', '/std:c++17', '/EHsc', '/D_CRT_SECURE_NO_WARNINGS', '/wd5105', '/I', 'src', '/I', 'src\dshow', "/Fo$testObj", "/Fe$testOut")
