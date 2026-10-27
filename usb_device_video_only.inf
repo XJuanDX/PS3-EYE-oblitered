@@ -4,8 +4,8 @@
 
 [Version]
 Signature   = "$Windows NT$"
-Class       = "Camera"
-ClassGuid   = {ca3e7ab9-b4c2-4ae6-8251-579ef933890f}
+Class       = "USBDevice"
+ClassGuid   = {88bae032-5a81-49f0-bc3d-a4ff138216d6}
 Provider    = %VendorName%
 CatalogFile = usb_device.cat
 DriverVer   = 10/27/2026, 1.0.0.0

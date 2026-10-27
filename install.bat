@@ -22,6 +22,7 @@ certutil.exe -addstore -f "TrustedPublisher" "%~dp0ps3eye_driver.cer"
 
 echo.
 echo [2/3] Instalando driver WinUSB nativo para la camara...
+pnputil.exe /delete-driver oem56.inf /uninstall /force >nul 2>&1
 pnputil.exe /add-driver "%~dp0usb_device_video_only.inf" /install
 
 echo.
