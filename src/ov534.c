@@ -341,7 +341,7 @@ static int fixp_cos16(uint16_t x)
     return (int)lround(cos((double)x * (2.0 * PS3EYE_PI / 65536.0)) * 32767.0);
 }
 
-static void set_hue(ov534 *c, int val)
+void ov534_set_hue(ov534 *c, int val)
 {
     int     huesin = fixp_sin16((uint16_t)val) * 0x80 / 0x7fff;
     int     huecos = fixp_cos16((uint16_t)val) * 0x80 / 0x7fff;
@@ -360,23 +360,23 @@ static void set_hue(ov534 *c, int val)
     ov534_sccb_write(c, 0xaa, (uint8_t)huesin);
 }
 
-static void set_saturation(ov534 *c, int val)
+void ov534_set_saturation(ov534 *c, int val)
 {
     ov534_sccb_write(c, 0xa7, (uint8_t)val);
     ov534_sccb_write(c, 0xa8, (uint8_t)val);
 }
 
-static void set_brightness(ov534 *c, int val)
+void ov534_set_brightness(ov534 *c, int val)
 {
     ov534_sccb_write(c, 0x9b, (uint8_t)val);
 }
 
-static void set_contrast(ov534 *c, int val)
+void ov534_set_contrast(ov534 *c, int val)
 {
     ov534_sccb_write(c, 0x9c, (uint8_t)val);
 }
 
-static void set_gain(ov534 *c, int val)
+void ov534_set_gain(ov534 *c, int val)
 {
     switch (val & 0x30) {
     case 0x00:
@@ -398,13 +398,13 @@ static void set_gain(ov534 *c, int val)
     ov534_sccb_write(c, 0x00, (uint8_t)val);
 }
 
-static void set_exposure(ov534 *c, int val)
+void ov534_set_exposure(ov534 *c, int val)
 {
     ov534_sccb_write(c, 0x08, (uint8_t)(val >> 7));
     ov534_sccb_write(c, 0x10, (uint8_t)(val << 1));
 }
 
-static void set_agc(ov534 *c, int on)
+void ov534_set_agc(ov534 *c, int on)
 {
     uint8_t v = 0;
 
@@ -421,7 +421,7 @@ static void set_agc(ov534 *c, int on)
     }
 }
 
-static void set_awb(ov534 *c, int on)
+void ov534_set_awb(ov534 *c, int on)
 {
     uint8_t v = 0;
 
@@ -438,7 +438,7 @@ static void set_awb(ov534 *c, int on)
     }
 }
 
-static void set_aec(ov534 *c, int auto_exposure)
+void ov534_set_aec(ov534 *c, int auto_exposure)
 {
     uint8_t v = 0;
 
@@ -449,13 +449,13 @@ static void set_aec(ov534 *c, int auto_exposure)
         ov534_sccb_write(c, 0x13, (uint8_t)(v & ~0x01));
 }
 
-static void set_sharpness(ov534 *c, int val)
+void ov534_set_sharpness(ov534 *c, int val)
 {
     ov534_sccb_write(c, 0x91, (uint8_t)val);
     ov534_sccb_write(c, 0x8e, (uint8_t)val);
 }
 
-static void set_hvflip(ov534 *c, int hflip, int vflip)
+void ov534_set_hvflip(ov534 *c, int hflip, int vflip)
 {
     uint8_t v = 0;
 
@@ -468,7 +468,7 @@ static void set_hvflip(ov534 *c, int hflip, int vflip)
     ov534_sccb_write(c, 0x0c, v);
 }
 
-static void set_light_freq(ov534 *c, int fifty_hz)
+void ov534_set_light_freq(ov534 *c, int fifty_hz)
 {
     ov534_sccb_write(c, 0x2b, (uint8_t)(fifty_hz ? 0x9e : 0x00));
 }
@@ -476,18 +476,18 @@ static void set_light_freq(ov534 *c, int fifty_hz)
 /* gspca applies these in sd_start() using the v4l2 control defaults. */
 static void apply_default_controls(ov534 *c)
 {
-    set_hue(c, 0);            /* V4L2_CID_HUE default */
-    set_saturation(c, 64);    /* V4L2_CID_SATURATION default */
-    set_agc(c, 1);            /* V4L2_CID_AUTOGAIN default */
-    set_awb(c, 1);            /* V4L2_CID_AUTO_WHITE_BALANCE default */
-    set_aec(c, 1);            /* V4L2_EXPOSURE_AUTO */
-    set_gain(c, 20);          /* V4L2_CID_GAIN default */
-    set_exposure(c, 120);     /* V4L2_CID_EXPOSURE default */
-    set_brightness(c, 0);     /* V4L2_CID_BRIGHTNESS default */
-    set_contrast(c, 32);      /* V4L2_CID_CONTRAST default */
-    set_sharpness(c, 0);      /* V4L2_CID_SHARPNESS default */
-    set_hvflip(c, 0, 0);      /* V4L2_CID_HFLIP/VFLIP default */
-    set_light_freq(c, 0);     /* V4L2_CID_POWER_LINE_FREQUENCY default */
+    ov534_set_hue(c, 0);            /* V4L2_CID_HUE default */
+    ov534_set_saturation(c, 64);    /* V4L2_CID_SATURATION default */
+    ov534_set_agc(c, 1);            /* V4L2_CID_AUTOGAIN default */
+    ov534_set_awb(c, 1);            /* V4L2_CID_AUTO_WHITE_BALANCE default */
+    ov534_set_aec(c, 1);            /* V4L2_EXPOSURE_AUTO */
+    ov534_set_gain(c, 20);          /* V4L2_CID_GAIN default */
+    ov534_set_exposure(c, 120);     /* V4L2_CID_EXPOSURE default */
+    ov534_set_brightness(c, 0);     /* V4L2_CID_BRIGHTNESS default */
+    ov534_set_contrast(c, 32);      /* V4L2_CID_CONTRAST default */
+    ov534_set_sharpness(c, 0);      /* V4L2_CID_SHARPNESS default */
+    ov534_set_hvflip(c, 0, 0);      /* V4L2_CID_HFLIP/VFLIP default */
+    ov534_set_light_freq(c, 0);     /* V4L2_CID_POWER_LINE_FREQUENCY default */
 }
 
 /* ------------------------------------------------------------------ */

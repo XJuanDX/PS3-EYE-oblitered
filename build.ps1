@@ -24,10 +24,12 @@ if (-not (Test-Path -LiteralPath $vcvars)) {
 }
 
 if ($Clean -and (Test-Path -LiteralPath $build)) {
-    Remove-Item -LiteralPath $build -Recurse -Force
+    Get-ChildItem -LiteralPath $build -Recurse -File | ForEach-Object {
+        Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+    }
 }
 
-foreach ($d in @($build, (Join-Path $build 'probe'), (Join-Path $build 'grab'), (Join-Path $build 'audio'), (Join-Path $build 'tests'), (Join-Path $build 'dshow'))) {
+foreach ($d in @($build, (Join-Path $build 'probe'), (Join-Path $build 'grab'), (Join-Path $build 'audio'), (Join-Path $build 'tests'), (Join-Path $build 'dshow'), (Join-Path $build 'app'))) {
     New-Item -ItemType Directory -Force -Path $d | Out-Null
 }
 
@@ -94,6 +96,7 @@ function Build-DShowDll {
     $dshowSources = @(
         'src\dshow\dll_main.cpp',
         'src\dshow\ps3eye_filter.cpp',
+        'src\ipc\ps3eye_ipc.c',
         'src\capture_session.c',
         'src\ps3eye_usb.c',
         'src\ov534.c',
@@ -127,10 +130,62 @@ function Build-DShowDll {
     )
 
     Write-Host "building $out"
+    if (Test-Path -LiteralPath $out) {
+        $oldDll = "$out.old"
+        if (Test-Path -LiteralPath $oldDll) { Remove-Item -LiteralPath $oldDll -Force -ErrorAction SilentlyContinue }
+        Rename-Item -LiteralPath $out -NewName ([System.IO.Path]::GetFileName($oldDll)) -Force -ErrorAction SilentlyContinue
+    }
     & cl.exe @dshowFlags @dshowSources @dshowLibs @linkArgs
     if ($LASTEXITCODE -ne 0) {
         throw "compilation failed for ps3eye_dshow.dll (exit $LASTEXITCODE)"
     }
+}
+
+function Build-App {
+    $out = "build\PS3EYEOblitered.exe"
+    $objDir = "build\app\"
+    $appSources = @(
+        'src\app\main_gui.c',
+        'src\ipc\ps3eye_ipc.c',
+        'src\capture_session.c',
+        'src\ps3eye_usb.c',
+        'src\ov534.c',
+        'src\ps3eye_frame.c',
+        'src\image_out.c'
+    )
+    $appFlags = @(
+        '/nologo',
+        '/W4',
+        '/O2',
+        '/std:c11',
+        '/D_CRT_SECURE_NO_WARNINGS',
+        '/wd5105',
+        '/I', 'src',
+        '/I', 'src\ipc',
+        '/I', 'src\app',
+        "/Fo$objDir",
+        "/Fe$out"
+    )
+    $appLibs = @(
+        'winusb.lib',
+        'setupapi.lib',
+        'advapi32.lib',
+        'user32.lib',
+        'gdi32.lib',
+        'comctl32.lib',
+        'shell32.lib'
+    )
+    $linkArgs = @(
+        '/link',
+        '/SUBSYSTEM:WINDOWS'
+    )
+
+    Write-Host "building $out"
+    & cl.exe @appFlags @appSources @appLibs @linkArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "compilation failed for PS3EYEOblitered.exe (exit $LASTEXITCODE)"
+    }
+    Copy-Item -Path $out -Destination "build\PS3EyeApp.exe" -Force
 }
 
 Push-Location $root
@@ -140,6 +195,7 @@ try {
     Build-Target -Name 'ps3eye-audio' -Main 'src\audio_main.c' -ObjDir 'build\audio'
     Build-Target -Name 'test_capture_session' -Main 'tests\test_capture_session.c' -ObjDir 'build\tests'
     Build-DShowDll
+    Build-App
 
     # DShow Tests
     $testObj = "build\tests\"
@@ -165,6 +221,20 @@ try {
     & cl.exe @testFlags tests\test_dshow_browser_compat.cpp @testLibs "/Fe$compatTestOut"
     if ($LASTEXITCODE -ne 0) {
         throw "compilation failed for test_dshow_browser_compat.exe (exit $LASTEXITCODE)"
+    }
+
+    $ipcTestOut = "build\test_ipc.exe"
+    Write-Host "building $ipcTestOut"
+    & cl.exe /nologo /W4 /O2 /std:c11 /D_CRT_SECURE_NO_WARNINGS /wd5105 /I src /I src\ipc "/Fobuild\tests\" tests\test_ipc.c src\ipc\ps3eye_ipc.c advapi32.lib "/Fe$ipcTestOut"
+    if ($LASTEXITCODE -ne 0) {
+        throw "compilation failed for test_ipc.exe (exit $LASTEXITCODE)"
+    }
+
+    $liveStreamTestOut = "build\test_live_stream.exe"
+    Write-Host "building $liveStreamTestOut"
+    & cl.exe /nologo /W4 /O2 /std:c11 /D_CRT_SECURE_NO_WARNINGS /wd5105 /I src /I src\ipc "/Fobuild\tests\" tests\test_live_stream.c src\ipc\ps3eye_ipc.c advapi32.lib "/Fe$liveStreamTestOut"
+    if ($LASTEXITCODE -ne 0) {
+        throw "compilation failed for test_live_stream.exe (exit $LASTEXITCODE)"
     }
 
     Write-Host ''

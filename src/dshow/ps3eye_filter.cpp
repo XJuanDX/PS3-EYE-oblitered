@@ -710,9 +710,41 @@ void PS3EyePin::DoBufferProcessingLoop()
         BYTE *pDst = nullptr;
         pSample->GetPointer(&pDst);
         long cbSize = pSample->GetSize();
+        bool gotFrame = false;
 
-        uint64_t qpc = 0;
-        if (capture_session_get_frame(session, pDst, cbSize, &qpc, 100)) {
+        // 1. Try IPC Consumer first (Virtual Camera mode from PS3EyeApp)
+        ps3eye_ipc_consumer *ipc = m_pFilter->GetIpcConsumer();
+        if (!ipc) {
+            m_pFilter->EnsureSessionOpen();
+            ipc = m_pFilter->GetIpcConsumer();
+        }
+
+        if (ipc && ps3eye_ipc_consumer_is_alive(ipc)) {
+            uint32_t w = 0, h = 0;
+            uint64_t ts = 0;
+            if (ps3eye_ipc_consumer_read(ipc, pDst, (uint32_t)cbSize, &w, &h, &ts, 35)) {
+                gotFrame = true;
+            }
+        }
+
+        // 2. Fallback to direct WinUSB hardware session if IPC not active
+        if (!gotFrame && session->is_running) {
+            uint64_t qpc = 0;
+            if (capture_session_get_frame(session, pDst, cbSize, &qpc, 35)) {
+                gotFrame = true;
+            }
+        }
+
+        // 3. If neither has frame, output neutral grey placeholder YUY2 (Y=128, U=128, V=128)
+        if (!gotFrame) {
+            memset(pDst, 0x80, (size_t)expectedSize);
+            DWORD sleepMs = (DWORD)(rtFrameDuration / 10000);
+            if (sleepMs < 10) sleepMs = 33;
+            Sleep(sleepMs);
+            gotFrame = true;
+        }
+
+        if (gotFrame) {
             REFERENCE_TIME rtStart = frameIndex * rtFrameDuration;
             REFERENCE_TIME rtEnd   = rtStart + rtFrameDuration;
             pSample->SetTime(&rtStart, &rtEnd);
@@ -723,15 +755,11 @@ void PS3EyePin::DoBufferProcessingLoop()
             pSample->Release();
             frameIndex++;
 
-            if (hr != S_OK) {
-                if (hr == S_FALSE) Sleep(10);
+            if (hr != S_OK && hr == S_FALSE) {
+                Sleep(5);
             }
         } else {
             pSample->Release();
-            if (capture_session_is_device_lost(session)) {
-                m_pFilter->NotifyEvent(EC_DEVICE_LOST, 0, 0);
-                break;
-            }
         }
     }
 }
@@ -746,6 +774,7 @@ PS3EyeFilter::PS3EyeFilter()
     , m_pClock(nullptr)
     , m_pGraph(nullptr)
     , m_pPin(nullptr)
+    , m_pIpcConsumer(nullptr)
     , m_bSessionOpened(false)
     , m_configuredMode(PS3EYE_MODE_VGA_640x480)
     , m_configuredFps(30)
@@ -781,13 +810,19 @@ void PS3EyeFilter::SetConfiguredMode(ps3eye_mode mode, uint16_t fps)
 
 HRESULT PS3EyeFilter::EnsureSessionOpen()
 {
-    if (m_bSessionOpened) return S_OK;
-
-    char err[256];
-    if (!capture_session_open(&m_session, m_configuredMode, m_configuredFps, err, sizeof(err))) {
-        return E_FAIL;
+    if (!m_pIpcConsumer) {
+        m_pIpcConsumer = ps3eye_ipc_consumer_open();
     }
-    m_bSessionOpened = true;
+    if (m_pIpcConsumer && ps3eye_ipc_consumer_is_alive(m_pIpcConsumer)) {
+        return S_OK;
+    }
+
+    if (!m_bSessionOpened) {
+        char err[256];
+        if (capture_session_open(&m_session, m_configuredMode, m_configuredFps, err, sizeof(err))) {
+            m_bSessionOpened = true;
+        }
+    }
     return S_OK;
 }
 
@@ -833,6 +868,10 @@ STDMETHODIMP PS3EyeFilter::Stop()
             capture_session_close(&m_session);
             m_bSessionOpened = false;
         }
+        if (m_pIpcConsumer) {
+            ps3eye_ipc_consumer_close(m_pIpcConsumer);
+            m_pIpcConsumer = nullptr;
+        }
         m_state = State_Stopped;
     }
     LeaveCriticalSection(&m_csFilter);
@@ -843,17 +882,10 @@ STDMETHODIMP PS3EyeFilter::Pause()
 {
     EnterCriticalSection(&m_csFilter);
     if (m_state == State_Stopped) {
-        HRESULT hr = EnsureSessionOpen();
-        if (FAILED(hr)) {
-            LeaveCriticalSection(&m_csFilter);
-            return hr;
-        }
-        char err[256];
-        if (!capture_session_start(&m_session, err, sizeof(err))) {
-            capture_session_close(&m_session);
-            m_bSessionOpened = false;
-            LeaveCriticalSection(&m_csFilter);
-            return E_FAIL;
+        EnsureSessionOpen();
+        if (m_bSessionOpened) {
+            char err[256];
+            capture_session_start(&m_session, err, sizeof(err));
         }
         if (m_pPin) m_pPin->Active();
     }

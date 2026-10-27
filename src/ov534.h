@@ -49,4 +49,18 @@ bool ov534_bridge_write(ov534 *c, uint8_t reg, uint8_t val);
 bool ov534_sccb_read(ov534 *c, uint8_t reg, uint8_t *val);
 bool ov534_sccb_write(ov534 *c, uint8_t reg, uint8_t val);
 
+/* Image and sensor controls (exposed for PS3EyeApp GUI & direct control) */
+void ov534_set_hue(ov534 *c, int val);
+void ov534_set_saturation(ov534 *c, int val);
+void ov534_set_brightness(ov534 *c, int val);
+void ov534_set_contrast(ov534 *c, int val);
+void ov534_set_gain(ov534 *c, int val);
+void ov534_set_exposure(ov534 *c, int val);
+void ov534_set_agc(ov534 *c, int on);
+void ov534_set_awb(ov534 *c, int on);
+void ov534_set_aec(ov534 *c, int auto_exposure);
+void ov534_set_sharpness(ov534 *c, int val);
+void ov534_set_hvflip(ov534 *c, int hflip, int vflip);
+void ov534_set_light_freq(ov534 *c, int fifty_hz);
+
 #endif /* OV534_H */

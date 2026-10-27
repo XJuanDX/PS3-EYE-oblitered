@@ -4,6 +4,7 @@
 #define PS3EYE_FILTER_H
 
 #include "ps3eye_dshow.h"
+#include "../ipc/ps3eye_ipc.h"
 
 class PS3EyeFilter;
 
@@ -98,6 +99,8 @@ public:
 
     // Internal helpers
     capture_session *GetSession() { return &m_session; }
+    ps3eye_ipc_consumer *GetIpcConsumer() { return m_pIpcConsumer; }
+    bool IsIpcActive() { return m_pIpcConsumer != nullptr && ps3eye_ipc_consumer_is_alive(m_pIpcConsumer); }
     void NotifyEvent(long EventCode, LONG_PTR EventParam1, LONG_PTR EventParam2);
     void SetConfiguredMode(ps3eye_mode mode, uint16_t fps);
     HRESULT EnsureSessionOpen();
@@ -109,6 +112,7 @@ private:
     IFilterGraph           *m_pGraph;
     PS3EyePin              *m_pPin;
     capture_session         m_session;
+    ps3eye_ipc_consumer    *m_pIpcConsumer;
     bool                    m_bSessionOpened;
     ps3eye_mode             m_configuredMode;
     uint16_t                m_configuredFps;

@@ -16,6 +16,10 @@ if ($isAdmin -and (Test-Path $dllPath)) {
 # Limpieza en HKCU
 Remove-Item -Path "HKCU:\Software\Classes\CLSID\$clsid" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$clsid" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "PS3EyeCamera" -ErrorAction SilentlyContinue
+
+# Detener proceso PS3 EYE oblitered si está en ejecución
+Get-Process -Name "PS3EYEOblitered", "PS3EyeApp" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
 Write-Host ""
 Write-Host "==========================================================" -ForegroundColor Green

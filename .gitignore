@@ -12,6 +12,7 @@ build/
 *.sys
 *.cat
 *.inf
+!usb_device_video_only.inf
 
 # Captured frames / test artifacts
 out/

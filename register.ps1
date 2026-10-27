@@ -29,6 +29,18 @@ New-Item -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$clsid" -Force |
 Set-ItemProperty -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$clsid" -Name "FriendlyName" -Value $friendlyName
 Set-ItemProperty -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$clsid" -Name "CLSID" -Value $clsid
 
+# Configurar autoarranque y poner en marcha PS3 EYE oblitered en la bandeja del sistema
+$appExe = Join-Path $PSScriptRoot "build\PS3EYEOblitered.exe"
+if (-not (Test-Path $appExe)) { $appExe = Join-Path $PSScriptRoot "build\PS3EyeApp.exe" }
+if (Test-Path $appExe) {
+    $appPath = (Resolve-Path $appExe).Path
+    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "PS3EyeCamera" -Value "`"$appPath`" --minimized"
+    $running = Get-Process -Name "PS3EYEOblitered", "PS3EyeApp" -ErrorAction SilentlyContinue
+    if (-not $running) {
+        Start-Process -FilePath $appPath -ArgumentList "--minimized"
+    }
+}
+
 Write-Host ""
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host " [EXITO] PS3 Eye Camera registrada como webcam DirectShow!" -ForegroundColor Green
