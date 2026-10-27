@@ -223,6 +223,20 @@ try {
         throw "compilation failed for test_dshow_browser_compat.exe (exit $LASTEXITCODE)"
     }
 
+    $obsCompatTestOut = "build\test_obs_dshow_compat.exe"
+    Write-Host "building $obsCompatTestOut"
+    & cl.exe @testFlags tests\test_obs_dshow_compat.cpp @testLibs "/Fe$obsCompatTestOut"
+    if ($LASTEXITCODE -ne 0) {
+        throw "compilation failed for test_obs_dshow_compat.exe (exit $LASTEXITCODE)"
+    }
+
+    $enumTestOut = "build\test_dshow_enum.exe"
+    Write-Host "building $enumTestOut"
+    & cl.exe @testFlags tests\test_dshow_enum.cpp @testLibs "/Fe$enumTestOut"
+    if ($LASTEXITCODE -ne 0) {
+        throw "compilation failed for test_dshow_enum.exe (exit $LASTEXITCODE)"
+    }
+
     $ipcTestOut = "build\test_ipc.exe"
     Write-Host "building $ipcTestOut"
     & cl.exe /nologo /W4 /O2 /std:c11 /D_CRT_SECURE_NO_WARNINGS /wd5105 /I src /I src\ipc "/Fobuild\tests\" tests\test_ipc.c src\ipc\ps3eye_ipc.c advapi32.lib "/Fe$ipcTestOut"

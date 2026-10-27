@@ -9,8 +9,14 @@ static HINSTANCE g_hInst = NULL;
 static bool SetRegString(HKEY hRoot, const wchar_t *subKey, const wchar_t *valName, const wchar_t *valData)
 {
     HKEY hKey;
-    if (RegCreateKeyExW(hRoot, subKey, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, NULL) != ERROR_SUCCESS)
-        return false;
+    REGSAM access = KEY_WRITE;
+#ifdef _WIN64
+    access |= KEY_WOW64_64KEY;
+#endif
+    if (RegCreateKeyExW(hRoot, subKey, 0, NULL, REG_OPTION_NON_VOLATILE, access, NULL, &hKey, NULL) != ERROR_SUCCESS) {
+        if (RegCreateKeyExW(hRoot, subKey, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, NULL) != ERROR_SUCCESS)
+            return false;
+    }
     RegSetValueExW(hKey, valName, 0, REG_SZ, (const BYTE*)valData, (DWORD)(wcslen(valData) + 1) * sizeof(WCHAR));
     RegCloseKey(hKey);
     return true;
@@ -105,19 +111,24 @@ STDAPI DllRegisterServer()
     const wchar_t *szCategory = L"{860BB310-5D01-11d0-BD3B-00A0C911CE86}";
     const wchar_t *szName = L"PS3 Eye Camera";
 
-    // 1. Register InprocServer32 under HKCR\CLSID
-    WCHAR szKey[512];
-    swprintf_s(szKey, L"CLSID\\%s", szClsid);
-    SetRegString(HKEY_CLASSES_ROOT, szKey, NULL, szName);
+    HKEY roots[] = { HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, HKEY_CLASSES_ROOT };
+    for (HKEY root : roots) {
+        WCHAR szKey[512];
+        const wchar_t *prefix = (root == HKEY_CLASSES_ROOT) ? L"CLSID" : L"Software\\Classes\\CLSID";
 
-    swprintf_s(szKey, L"CLSID\\%s\\InprocServer32", szClsid);
-    SetRegString(HKEY_CLASSES_ROOT, szKey, NULL, szPath);
-    SetRegString(HKEY_CLASSES_ROOT, szKey, L"ThreadingModel", L"Both");
+        // 1. Register InprocServer32
+        swprintf_s(szKey, L"%s\\%s", prefix, szClsid);
+        SetRegString(root, szKey, NULL, szName);
 
-    // 2. Register under DirectShow Video Input Device Category
-    swprintf_s(szKey, L"CLSID\\%s\\Instance\\%s", szCategory, szClsid);
-    SetRegString(HKEY_CLASSES_ROOT, szKey, L"FriendlyName", szName);
-    SetRegString(HKEY_CLASSES_ROOT, szKey, L"CLSID", szClsid);
+        swprintf_s(szKey, L"%s\\%s\\InprocServer32", prefix, szClsid);
+        SetRegString(root, szKey, NULL, szPath);
+        SetRegString(root, szKey, L"ThreadingModel", L"Both");
+
+        // 2. Register under DirectShow Video Input Device Category
+        swprintf_s(szKey, L"%s\\%s\\Instance\\%s", prefix, szCategory, szClsid);
+        SetRegString(root, szKey, L"FriendlyName", szName);
+        SetRegString(root, szKey, L"CLSID", szClsid);
+    }
 
     // 3. Register via IFilterMapper2 for native DirectShow enumerator
     HRESULT hrCo = CoInitialize(NULL);
@@ -141,7 +152,8 @@ STDAPI DllRegisterServer()
             1,
             (const REGFILTERPINS*)&regPin
         };
-        pMapper->RegisterFilter(CLSID_PS3EyeFilter, szName, NULL, &CLSID_VideoInputDeviceCategory, szName, &regFilter);
+        // Register under instance name szClsid to follow modern DirectShow standard (like OBS Virtual Camera)
+        pMapper->RegisterFilter(CLSID_PS3EyeFilter, szName, NULL, &CLSID_VideoInputDeviceCategory, szClsid, &regFilter);
         pMapper->Release();
     }
     if (SUCCEEDED(hrCo)) CoUninitialize();
@@ -160,19 +172,27 @@ STDAPI DllUnregisterServer()
     IFilterMapper2 *pMapper = nullptr;
     if (SUCCEEDED(CoCreateInstance(CLSID_FilterMapper2, NULL, CLSCTX_INPROC_SERVER,
                                    IID_IFilterMapper2, (void**)&pMapper)) && pMapper) {
+        pMapper->UnregisterFilter(&CLSID_VideoInputDeviceCategory, szClsid, CLSID_PS3EyeFilter);
         pMapper->UnregisterFilter(&CLSID_VideoInputDeviceCategory, szName, CLSID_PS3EyeFilter);
         pMapper->Release();
     }
     if (SUCCEEDED(hrCo)) CoUninitialize();
 
-    // 2. Remove DirectShow Video Input Device Category instance
-    WCHAR szKey[512];
-    swprintf_s(szKey, L"CLSID\\%s\\Instance\\%s", szCategory, szClsid);
-    RegDeleteTreeW(HKEY_CLASSES_ROOT, szKey);
+    // 2. Remove DirectShow Video Input Device Category instance and CLSID across hives
+    HKEY roots[] = { HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, HKEY_CLASSES_ROOT };
+    for (HKEY root : roots) {
+        WCHAR szKey[512];
+        const wchar_t *prefix = (root == HKEY_CLASSES_ROOT) ? L"CLSID" : L"Software\\Classes\\CLSID";
 
-    // 3. Remove InprocServer32 and CLSID
-    swprintf_s(szKey, L"CLSID\\%s", szClsid);
-    RegDeleteTreeW(HKEY_CLASSES_ROOT, szKey);
+        swprintf_s(szKey, L"%s\\%s\\Instance\\%s", prefix, szCategory, szClsid);
+        RegDeleteTreeW(root, szKey);
+
+        swprintf_s(szKey, L"%s\\%s\\Instance\\%s", prefix, szCategory, szName);
+        RegDeleteTreeW(root, szKey);
+
+        swprintf_s(szKey, L"%s\\%s", prefix, szClsid);
+        RegDeleteTreeW(root, szKey);
+    }
 
     return S_OK;
 }
