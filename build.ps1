@@ -27,7 +27,7 @@ if ($Clean -and (Test-Path -LiteralPath $build)) {
     Remove-Item -LiteralPath $build -Recurse -Force
 }
 
-foreach ($d in @($build, (Join-Path $build 'probe'), (Join-Path $build 'grab'), (Join-Path $build 'audio'))) {
+foreach ($d in @($build, (Join-Path $build 'probe'), (Join-Path $build 'grab'), (Join-Path $build 'audio'), (Join-Path $build 'tests'))) {
     New-Item -ItemType Directory -Force -Path $d | Out-Null
 }
 
@@ -53,6 +53,7 @@ $common = @(
     'src\ps3eye_usb.c',
     'src\ov534.c',
     'src\ps3eye_frame.c',
+    'src\capture_session.c',
     'src\image_out.c'
 )
 
@@ -92,6 +93,7 @@ try {
     Build-Target -Name 'ps3eye-probe' -Main 'src\probe_main.c' -ObjDir 'build\probe'
     Build-Target -Name 'ps3eye-grab'  -Main 'src\grab_main.c'  -ObjDir 'build\grab'
     Build-Target -Name 'ps3eye-audio' -Main 'src\audio_main.c' -ObjDir 'build\audio'
+    Build-Target -Name 'test_capture_session' -Main 'tests\test_capture_session.c' -ObjDir 'build\tests'
 
     Write-Host ''
     Write-Host 'artifacts:'
