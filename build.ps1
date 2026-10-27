@@ -27,7 +27,7 @@ if ($Clean -and (Test-Path -LiteralPath $build)) {
     Remove-Item -LiteralPath $build -Recurse -Force
 }
 
-foreach ($d in @($build, (Join-Path $build 'probe'), (Join-Path $build 'grab'), (Join-Path $build 'audio'), (Join-Path $build 'tests'))) {
+foreach ($d in @($build, (Join-Path $build 'probe'), (Join-Path $build 'grab'), (Join-Path $build 'audio'), (Join-Path $build 'tests'), (Join-Path $build 'dshow'))) {
     New-Item -ItemType Directory -Force -Path $d | Out-Null
 }
 
@@ -88,16 +88,74 @@ function Build-Target {
     }
 }
 
+function Build-DShowDll {
+    $out = "build\ps3eye_dshow.dll"
+    $objDir = "build\dshow\"
+    $dshowSources = @(
+        'src\dshow\dll_main.cpp',
+        'src\dshow\ps3eye_filter.cpp',
+        'src\capture_session.c',
+        'src\ps3eye_usb.c',
+        'src\ov534.c',
+        'src\ps3eye_frame.c'
+    )
+    $dshowFlags = @(
+        '/nologo',
+        '/W4',
+        '/O2',
+        '/std:c++17',
+        '/EHsc',
+        '/LD',
+        '/D_CRT_SECURE_NO_WARNINGS',
+        '/wd5105',
+        '/I', 'src',
+        '/I', 'src\dshow',
+        "/Fo$objDir",
+        "/Fe$out"
+    )
+    $dshowLibs = @(
+        'winusb.lib',
+        'setupapi.lib',
+        'advapi32.lib',
+        'ole32.lib',
+        'oleaut32.lib',
+        'strmiids.lib'
+    )
+    $linkArgs = @(
+        '/link',
+        '/DEF:src\dshow\ps3eye_dshow.def'
+    )
+
+    Write-Host "building $out"
+    & cl.exe @dshowFlags @dshowSources @dshowLibs @linkArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "compilation failed for ps3eye_dshow.dll (exit $LASTEXITCODE)"
+    }
+}
+
 Push-Location $root
 try {
     Build-Target -Name 'ps3eye-probe' -Main 'src\probe_main.c' -ObjDir 'build\probe'
     Build-Target -Name 'ps3eye-grab'  -Main 'src\grab_main.c'  -ObjDir 'build\grab'
     Build-Target -Name 'ps3eye-audio' -Main 'src\audio_main.c' -ObjDir 'build\audio'
     Build-Target -Name 'test_capture_session' -Main 'tests\test_capture_session.c' -ObjDir 'build\tests'
+    Build-DShowDll
+
+    # Test DShow COM Filter
+    $testOut = "build\test_dshow_filter.exe"
+    $testObj = "build\tests\"
+    $testFlags = @('/nologo', '/W4', '/O2', '/std:c++17', '/EHsc', '/D_CRT_SECURE_NO_WARNINGS', '/wd5105', '/I', 'src', '/I', 'src\dshow', "/Fo$testObj", "/Fe$testOut")
+    $testSources = @('tests\test_dshow_filter.cpp')
+    $testLibs = @('ole32.lib', 'oleaut32.lib', 'strmiids.lib')
+    Write-Host "building $testOut"
+    & cl.exe @testFlags @testSources @testLibs
+    if ($LASTEXITCODE -ne 0) {
+        throw "compilation failed for test_dshow_filter.exe (exit $LASTEXITCODE)"
+    }
 
     Write-Host ''
     Write-Host 'artifacts:'
-    Get-ChildItem -LiteralPath $build -Filter *.exe | ForEach-Object {
+    Get-ChildItem -LiteralPath $build -Filter *.* | Where-Object { $_.Extension -in '.exe', '.dll' } | ForEach-Object {
         Write-Host ("  {0}  ({1:N0} bytes)" -f $_.FullName, $_.Length)
     }
 }

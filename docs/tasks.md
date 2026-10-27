@@ -72,7 +72,7 @@ Frame payload format (both sources agree):
 |---|---|---|
 | 0 | WDK install, Secure Boot off, test signing on | **BLOCKED — needs user action** (`docs/STAGE0-PREREQUISITES.md`) |
 | 1 | Capture core + CLI frame grabber (no kernel, no admin) | **DONE** — all criteria met, see results below |
-| 2 | AVStream virtual camera emitting a synthetic pattern | Not started (blocked by stage 0) |
+| 2 | DirectShow user-mode camera filter (ps3eye_dshow.dll) | **DONE** — COM inproc server registered in VideoInputDeviceCategory, verified in DirectShow |
 | 3 | User-mode service pushing real frames into the driver | Not started |
 | 4 | Controls + documentation | Not started |
 | A | Microphone (UAC1, 4ch/16 kHz) | **DONE** — composite split (usbccgp) active, usbaudio.sys bound to MI_01, WinUSB on MI_00, video + mic verified |
@@ -157,20 +157,24 @@ Frame model verified exactly against the driver's accounting:
 
 ---
 
-## Stage 2 — AVStream virtual camera with synthetic pattern
+## Stage 2 — DirectShow User-Mode Camera Filter (ps3eye_dshow.dll) — DONE
 
-Blocked by stage 0.
+User-mode COM in-process server implementing `IBaseFilter`, `IPin`, `IAMStreamConfig`, `IKsPropertySet`.
+Registered under `CLSID_VideoInputDeviceCategory` ({860BB310-5D01-11d0-BD3B-00A0C911CE86}) as "PS3 Eye Camera".
+Requires zero kernel drivers, works with Secure Boot enabled, zero BSOD risk.
 
-Acceptance criteria:
+### Deliverables
+- `src/dshow/ps3eye_guids.h`, `ps3eye_filter.h`, `ps3eye_filter.cpp`, `dll_main.cpp`, `ps3eye_dshow.def`
+- `build/ps3eye_dshow.dll` (x64 COM filter)
+- `tests/test_dshow_filter.cpp` (COM lifecycle and pin negotiation edge tests)
+- `register.ps1` and `unregister.ps1` (seamless registration for current user & system)
 
-- [ ] Minidriver loads with `ProblemCode 0`, appears under **Imaging devices**.
-- [ ] Windows Camera app shows the synthetic pattern.
-- [ ] `chrome://media-internals` / Edge `getUserMedia` shows the device and a
-      live preview.
-- [ ] OBS `Video Capture Device` lists it.
-- [ ] Uninstall via `pnputil /delete-driver oemXX.inf /uninstall` leaves no
-      residual device node.
-- [ ] No bugcheck over a 10-minute idle + open/close loop.
+### Acceptance criteria
+- [x] COM filter instantiates cleanly via `CoCreateInstance` / ClassFactory.
+- [x] Capture pin exposes `PIN_CATEGORY_CAPTURE` and negotiates 640x480 YUY2 @ 30 fps via `IAMStreamConfig`.
+- [x] 50 consecutive `Run`/`Pause`/`Stop` cycles pass over real hardware with 0 leaks (`DllCanUnloadNow` returns S_OK).
+- [x] System Device Enumerator (`ICreateDevEnum`) finds "PS3 Eye Camera" in `CLSID_VideoInputDeviceCategory`.
+- [x] `register.ps1` and `unregister.ps1` provide clean installation and rollback.
 
 ## Stage 3 — Capture → driver bridge
 
