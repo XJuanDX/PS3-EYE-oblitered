@@ -1,0 +1,47 @@
+# Build output
+build/
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.lib
+*.exp
+*.dll
+
+# Driver build output
+*.sys
+*.cat
+*.inf
+
+# Captured frames / test artifacts
+out/
+*.ppm
+*.yuy2
+*.raw
+
+# Secrets — never commit any of these.
+# The test signing key is personal; it stays outside the repository.
+*.pfx
+*.p12
+*.cer
+*.crt
+*.pem
+*.key
+*.pvk
+*.snk
+*.jks
+ps3eye-test.*
+secrets*
+*.secret
+id_rsa*
+.env
+
+# IDE / editor
+.vs/
+.vscode/
+*.user
+*.suo
+
+# OS noise
+Thumbs.db
+desktop.ini

@@ -1,0 +1,6 @@
+# Normalise on commit, native on checkout.
+* text=auto
+*.c    text
+*.h    text
+*.ps1  text
+*.md   text
