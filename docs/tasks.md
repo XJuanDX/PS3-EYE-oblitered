@@ -75,7 +75,7 @@ Frame payload format (both sources agree):
 | 2 | AVStream virtual camera emitting a synthetic pattern | Not started (blocked by stage 0) |
 | 3 | User-mode service pushing real frames into the driver | Not started |
 | 4 | Controls + documentation | Not started |
-| A | Microphone (UAC1, 4ch/16 kHz) | **Assessed, blocked in the current binding** — see `docs/AUDIO.md`; needs a decision |
+| A | Microphone (UAC1, 4ch/16 kHz) | **DONE** — composite split (usbccgp) active, usbaudio.sys bound to MI_01, WinUSB on MI_00, video + mic verified |
 
 ---
 
@@ -188,23 +188,16 @@ Acceptance criteria:
 
 ---
 
-## Stage A — Microphone (candidate, not in the original scope)
+## Stage A — Microphone (UAC1, 4ch/16 kHz) — DONE
 
-Full analysis and evidence in `docs/AUDIO.md`. Summary:
+Completed via Option A (`usbccgp.sys` composite split).
 
-- The device declares a UAC1 microphone: 4 channels, 16 bit, 16 kHz,
-  `EP 0x84` isochronous (max packet 768, interval 4), 128,000 B/s.
-- Windows does not expose it today: one WinUSB device node, no `usbccgp`
-  children, no `usbaudio` binding, no audio endpoint from this camera.
-- WinUSB *can* select the audio alt setting and see the endpoint, but every
-  isochronous read fails with `ERROR_GEN_FAILURE` (31), with or without the
-  sampling-frequency request and with or without video streaming.
-- The only viable route is a rebind so `usbccgp` splits the device and
-  `usbaudio.sys` owns interfaces 1+2. That needs admin, changes the topology
-  Stage 1 depends on, and its success is not guaranteed on an IAD-less
-  configuration.
-
-Blocked on a user decision; deliberately not attempted during Stage 1.
+### Observed results
+- Composite parent: `USB\VID_1415&PID_2000` bound to Microsoft `usbccgp.sys`.
+- Audio function: `USB\VID_1415&PID_2000&MI_01` bound to Microsoft `usbaudio.sys` (`Status: OK`).
+- Windows CoreAudio endpoint: `Micrófono (USB Camera-B4.09.24.1)` active (`State: 1`) and set as default audio capture device.
+- Video function: `USB\VID_1415&PID_2000&MI_00` bound to `WinUSB`. Dynamic GUID discovery added to `ps3eye_usb.c` to resolve both legacy and composite child interface GUIDs.
+- `ps3eye-grab --frames 30` delivers 30/30 frames, 30.01 fps, 0 dropped frames, 0 errors simultaneously with the microphone active.
 
 ---
 

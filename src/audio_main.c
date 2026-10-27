@@ -6,10 +6,9 @@
  * can the microphone stream be read in user mode through the WinUSB binding
  * that is already installed, without any driver change?
  *
- * It uses the isochronous subset of WinUSB (WinUsb_RegisterIsochBuffer +
- * WinUsb_ReadIsochPipeAsap). The audio streaming interface is switched to
- * alternate setting 1 for the duration of the capture and always restored to
- * alternate setting 0 afterwards.
+ * It uses the isochronous subset of WinUSB. The audio streaming interface is
+ * switched to alternate setting 1 for the duration of the capture and always
+ * restored to alternate setting 0 afterwards.
  */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -26,13 +25,20 @@
 #define DEFAULT_PACKETS 2048u
 #define CAPTURE_TIMEOUT_MS 5000u
 
+typedef enum { MODE_ASAP = 0, MODE_FRAME, MODE_FRAME_CONT } read_mode;
+
 static void usage(void)
 {
     printf("usage: ps3eye-audio [options]\n"
            "\n"
-           "  --packets N    isochronous packets to request (default %u)\n"
-           "  --out FILE     write the captured PCM payload to FILE (raw, no header)\n"
-           "  --after-video  start the video stream first and keep it running\n"
+           "  --packets N       isochronous packets to request (default %u)\n"
+           "  --out FILE        write the captured PCM payload to FILE (raw, no header)\n"
+           "  --after-video     start the video stream first and keep it running\n"
+           "  --mode M          read mode: asap (default), frame, frame-cont\n"
+           "  --reset-pipe      call WinUsb_ResetPipe before the read\n"
+           "  --flush-pipe      call WinUsb_FlushPipe before the read\n"
+           "  --pipe-policy P   set pipe policy: auto-clear-stall, transfer-timeout=MS\n"
+           "  --query-pipe-ex   dump WINUSB_PIPE_INFORMATION_EX\n"
            "  --help\n"
            "\n"
            "One packet is one USB service interval (a microframe on a\n"
@@ -68,6 +74,11 @@ int main(int argc, char **argv)
     bool                      restored = false;
     bool                      ok = false;
     bool                      after_video = false;
+    bool                      do_reset = false, do_flush = false;
+    bool                      do_query_ex = false;
+    unsigned                  transfer_timeout = 0;
+    bool                      auto_clear = false;
+    read_mode                 mode = MODE_ASAP;
     ov534                     cam;
     ps3eye_reader            *rd = NULL;
     bool                      video_up = false;
@@ -85,6 +96,27 @@ int main(int argc, char **argv)
             i++;
         } else if (strcmp(a, "--after-video") == 0) {
             after_video = true;
+        } else if (strcmp(a, "--mode") == 0 && v) {
+            if (strcmp(v, "asap") == 0) mode = MODE_ASAP;
+            else if (strcmp(v, "frame") == 0) mode = MODE_FRAME;
+            else if (strcmp(v, "frame-cont") == 0) mode = MODE_FRAME_CONT;
+            else { fprintf(stderr, "unknown --mode %s\n", v); return 2; }
+            i++;
+        } else if (strcmp(a, "--reset-pipe") == 0) {
+            do_reset = true;
+        } else if (strcmp(a, "--flush-pipe") == 0) {
+            do_flush = true;
+        } else if (strcmp(a, "--pipe-policy") == 0 && v) {
+            if (strcmp(v, "auto-clear-stall") == 0) auto_clear = true;
+            else if (strncmp(v, "transfer-timeout=", 17) == 0) {
+                transfer_timeout = (unsigned)atoi(v + 17);
+            } else {
+                fprintf(stderr, "unknown --pipe-policy %s\n", v);
+                return 2;
+            }
+            i++;
+        } else if (strcmp(a, "--query-pipe-ex") == 0) {
+            do_query_ex = true;
         } else if (strcmp(a, "--help") == 0 || strcmp(a, "-h") == 0) {
             usage();
             return 0;
@@ -150,12 +182,54 @@ int main(int argc, char **argv)
         goto cleanup;
     }
 
+    if (do_query_ex) {
+        WINUSB_PIPE_INFORMATION_EX pipe_ex;
+        memset(&pipe_ex, 0, sizeof(pipe_ex));
+        if (WinUsb_QueryPipeEx(audio, 1, 0, &pipe_ex)) {
+            printf("pipe ex       : max bytes/interval %u\n",
+                   (unsigned)pipe_ex.MaximumBytesPerInterval);
+        } else {
+            printf("pipe ex       : WinUsb_QueryPipeEx failed (error %lu)\n",
+                   (unsigned long)GetLastError());
+        }
+    }
+
     if (!WinUsb_SetCurrentAlternateSetting(audio, 1)) {
         fprintf(stderr, "SET_INTERFACE alt 1 failed: error %lu\n",
                 (unsigned long)GetLastError());
         goto cleanup;
     }
     alt1 = true;
+
+    /* Optional pipe reset/flush before first read */
+    if (do_reset && WinUsb_ResetPipe) {
+        if (WinUsb_ResetPipe(audio, pipe.PipeId))
+            printf("reset pipe    : ok\n");
+        else
+            printf("reset pipe    : failed (error %lu)\n", (unsigned long)GetLastError());
+    }
+    if (do_flush && WinUsb_FlushPipe) {
+        if (WinUsb_FlushPipe(audio, pipe.PipeId))
+            printf("flush pipe    : ok\n");
+        else
+            printf("flush pipe    : failed (error %lu)\n", (unsigned long)GetLastError());
+    }
+
+    /* Optional pipe policies */
+    if (auto_clear) {
+        ULONG val = 1;
+        if (WinUsb_SetPipePolicy(audio, pipe.PipeId, 3 /* AUTO_CLEAR_STALL */, sizeof(val), &val))
+            printf("pipe policy   : AUTO_CLEAR_STALL = 1\n");
+        else
+            printf("pipe policy   : AUTO_CLEAR_STALL failed (error %lu)\n", (unsigned long)GetLastError());
+    }
+    if (transfer_timeout) {
+        ULONG val = transfer_timeout;
+        if (WinUsb_SetPipePolicy(audio, pipe.PipeId, 4 /* PIPE_TRANSFER_TIMEOUT */, sizeof(val), &val))
+            printf("pipe policy   : PIPE_TRANSFER_TIMEOUT = %u ms\n", transfer_timeout);
+        else
+            printf("pipe policy   : PIPE_TRANSFER_TIMEOUT failed (error %lu)\n", (unsigned long)GetLastError());
+    }
 
     {
         /* UAC1 SET_CUR SAMPLING_FREQ_CONTROL: bmRequestType 0x22 (class,
@@ -180,6 +254,7 @@ int main(int argc, char **argv)
                    (unsigned long)GetLastError());
         }
     }
+
     printf("device        : PS3 Eye VID_%04x&PID_%04x via WinUSB\n",
            PS3EYE_VID, PS3EYE_PID);
     printf("iso pipe      : EP 0x%02x, max packet %u, interval %u\n",
@@ -187,6 +262,8 @@ int main(int argc, char **argv)
            (unsigned)pipe.Interval);
     printf("packets       : %u (%.3f ms of bus time)\n",
            npackets, (double)npackets / 8.0);
+    printf("read mode     : %s\n",
+           mode == MODE_ASAP ? "asap" : (mode == MODE_FRAME ? "frame" : "frame-cont"));
 
     buf = (uint8_t *)malloc((size_t)pipe.MaximumPacketSize * npackets);
     pd  = (USBD_ISO_PACKET_DESCRIPTOR *)calloc(npackets, sizeof(*pd));
@@ -213,15 +290,96 @@ int main(int argc, char **argv)
         DWORD  got = 0;
         ULONG  total = 0, nonempty = 0, minlen = 0xffffffffu, maxlen = 0;
         ULONG  errors = 0, k;
+        ULONG  frame_number = 0;
+        LARGE_INTEGER timestamp = {0};
 
-        if (!WinUsb_ReadIsochPipeAsap(hbuf, 0, pipe.MaximumPacketSize * npackets,
-                                      FALSE, npackets, pd, &ov)) {
-            DWORD e = GetLastError();
-            if (e != ERROR_IO_PENDING) {
-                fprintf(stderr, "WinUsb_ReadIsochPipeAsap failed: error %lu\n",
-                        (unsigned long)e);
+        /* For frame-number modes, get a starting frame number */
+        if (mode != MODE_ASAP) {
+            if (!WinUsb_GetCurrentFrameNumber(audio, &frame_number, &timestamp)) {
+                fprintf(stderr, "GetCurrentFrameNumber failed: error %lu\n",
+                        (unsigned long)GetLastError());
                 goto cleanup;
             }
+            /* Schedule a few frames ahead to give the HC time to schedule */
+            frame_number += 8;
+            printf("start frame   : %lu\n", frame_number);
+        }
+
+        bool read_ok = false;
+
+        if (mode == MODE_ASAP) {
+            if (!WinUsb_ReadIsochPipeAsap(hbuf, 0, pipe.MaximumPacketSize * npackets,
+                                          FALSE, npackets, pd, &ov)) {
+                DWORD e = GetLastError();
+                if (e != ERROR_IO_PENDING) {
+                    fprintf(stderr, "WinUsb_ReadIsochPipeAsap failed: error %lu\n",
+                            (unsigned long)e);
+                    goto cleanup;
+                }
+            }
+            read_ok = true;
+        } else if (mode == MODE_FRAME) {
+            if (!WinUsb_ReadIsochPipe(hbuf, 0, pipe.MaximumPacketSize * npackets,
+                                      &frame_number, npackets, pd, &ov)) {
+                DWORD e = GetLastError();
+                if (e != ERROR_IO_PENDING) {
+                    fprintf(stderr, "WinUsb_ReadIsochPipe failed: error %lu\n",
+                            (unsigned long)e);
+                    goto cleanup;
+                }
+            }
+            read_ok = true;
+        } else if (mode == MODE_FRAME_CONT) {
+            /* Continuous: submit multiple reads back-to-back with adjusted frames */
+            ULONG remaining = npackets;
+            ULONG submitted = 0;
+            ULONG fn = frame_number;
+            LARGE_INTEGER ts = timestamp;
+
+            while (remaining > 0) {
+                ULONG this_batch = (remaining > 256) ? 256 : remaining;
+                if (!WinUsb_ReadIsochPipe(hbuf, 0, pipe.MaximumPacketSize * this_batch,
+                                          &fn, this_batch, pd + submitted, &ov)) {
+                    DWORD e = GetLastError();
+                    if (e != ERROR_IO_PENDING) {
+                        fprintf(stderr, "WinUsb_ReadIsochPipe (cont) failed: error %lu\n",
+                                (unsigned long)e);
+                        goto cleanup;
+                    }
+                }
+
+                waited = WaitForSingleObject(ev, CAPTURE_TIMEOUT_MS);
+                if (waited == WAIT_TIMEOUT) {
+                    fprintf(stderr, "iso transfer timed out after %u ms\n",
+                            (unsigned)CAPTURE_TIMEOUT_MS);
+                    WinUsb_AbortPipe(audio, pipe.PipeId);
+                    break;
+                }
+                if (!WinUsb_GetOverlappedResult(audio, &ov, &got, FALSE)) {
+                    fprintf(stderr, "GetOverlappedResult failed: error %lu\n",
+                            (unsigned long)GetLastError());
+                    goto cleanup;
+                }
+
+                submitted += this_batch;
+                remaining -= this_batch;
+
+                /* Adjust next frame number based on completion timestamp */
+                if (!WinUsb_GetAdjustedFrameNumber(&fn, ts))
+                    fn += this_batch;
+
+                if (remaining > 0) {
+                    ResetEvent(ev);
+                    ov.hEvent = ev;
+                }
+            }
+            read_ok = true;
+            npackets = submitted; /* adjust for reporting */
+        }
+
+        if (!read_ok) {
+            fprintf(stderr, "no read submitted\n");
+            goto cleanup;
         }
 
         waited = WaitForSingleObject(ev, CAPTURE_TIMEOUT_MS);
@@ -275,9 +433,6 @@ int main(int argc, char **argv)
                        (unsigned long)minlen, (unsigned long)maxlen,
                        (unsigned long)total);
 
-            /* Every non-empty packet is one service interval's worth of data.
-             * Deriving the rate from the payload (not from wall clock) removes
-             * scheduling gaps from the measurement. */
             if (nonempty) {
                 double span_s = (double)npackets / 8000.0;
                 printf("derived rate  : %.0f bytes/s over %.3f ms of bus time\n",
@@ -285,9 +440,6 @@ int main(int argc, char **argv)
             }
         }
 
-        /* The descriptor declares 4 channels, 16 bit, 16 kHz. Report what the
-         * bytes actually look like per declared channel instead of assuming
-         * all four carry signal. */
         if (total >= 8) {
             unsigned ch, nch = 4;
             unsigned frames = (unsigned)(total / (2u * nch));

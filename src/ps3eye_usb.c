@@ -62,6 +62,56 @@ static bool contains_ci(const char *hay, const char *needle)
     return false;
 }
 
+static bool parse_guid_string(const char *str, GUID *g)
+{
+    unsigned long p0;
+    unsigned int p1, p2, p3[8];
+    const char *p = strchr(str, '{');
+    if (!p) p = str;
+    while (*p == '{') p++;
+    if (sscanf(p, "%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+               &p0, &p1, &p2,
+               &p3[0], &p3[1], &p3[2], &p3[3],
+               &p3[4], &p3[5], &p3[6], &p3[7]) == 11) {
+        g->Data1 = p0;
+        g->Data2 = (unsigned short)p1;
+        g->Data3 = (unsigned short)p2;
+        for (int i = 0; i < 8; i++)
+            g->Data4[i] = (unsigned char)p3[i];
+        return true;
+    }
+    return false;
+}
+
+static bool read_guid_from_registry(const char *key_path, GUID *out_guid)
+{
+    HKEY hKey;
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, key_path, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+        return false;
+
+    char subkey[256];
+    DWORD subkey_len = sizeof(subkey);
+    bool found = false;
+
+    if (RegEnumKeyExA(hKey, 0, subkey, &subkey_len, NULL, NULL, NULL, NULL) == ERROR_SUCCESS) {
+        char param_path[512];
+        _snprintf_s(param_path, sizeof(param_path), _TRUNCATE, "%s\\%s\\Device Parameters", key_path, subkey);
+        HKEY hParams;
+        if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, param_path, 0, KEY_READ, &hParams) == ERROR_SUCCESS) {
+            char guid_str[256];
+            DWORD guid_len = sizeof(guid_str);
+            DWORD type = 0;
+            if (RegQueryValueExA(hParams, "DeviceInterfaceGUIDs", NULL, &type, (LPBYTE)guid_str, &guid_len) == ERROR_SUCCESS) {
+                if (parse_guid_string(guid_str, out_guid))
+                    found = true;
+            }
+            RegCloseKey(hParams);
+        }
+    }
+    RegCloseKey(hKey);
+    return found;
+}
+
 /* ------------------------------------------------------------------ */
 /* open / close                                                        */
 /* ------------------------------------------------------------------ */
@@ -109,6 +159,9 @@ bool ps3eye_open(ps3eye_dev *d, char *err, size_t errlen)
     bool                          ok = false;
     ULONG                         len;
     UCHAR                         speed = 0;
+    GUID                          guids[4];
+    size_t                        num_guids = 0;
+    size_t                        g;
 
     memset(d, 0, sizeof(*d));
     d->file  = INVALID_HANDLE_VALUE;
@@ -117,95 +170,125 @@ bool ps3eye_open(ps3eye_dev *d, char *err, size_t errlen)
     if (errlen)
         err[0] = '\0';
 
-    set = SetupDiGetClassDevsA(&PS3EYE_IFACE_GUID, NULL, NULL,
-                               DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
-    if (set == INVALID_HANDLE_VALUE) {
-        ps3eye_format_error(err, errlen, "SetupDiGetClassDevs");
-        return false;
+    /* 1. Try reading dynamic GUID for MI_00 first (split device under usbccgp) */
+    if (read_guid_from_registry("SYSTEM\\CurrentControlSet\\Enum\\USB\\VID_1415&PID_2000&MI_00", &guids[num_guids]))
+        num_guids++;
+
+    /* 2. Try reading dynamic GUID for root device (monolithic WinUSB binding) */
+    if (read_guid_from_registry("SYSTEM\\CurrentControlSet\\Enum\\USB\\VID_1415&PID_2000", &guids[num_guids]))
+        num_guids++;
+
+    /* 3. Static fallback: Zadig MI_00 GUID on Windows 10 */
+    {
+        GUID zadig_mi00 = { 0x3EE26403, 0x0568, 0x4460, { 0xB3, 0xA3, 0x88, 0x1C, 0x82, 0x17, 0xA7, 0x59 } };
+        guids[num_guids++] = zadig_mi00;
     }
 
-    for (index = 0; ; index++) {
-        PSP_DEVICE_INTERFACE_DETAIL_DATA_A detail = NULL;
-        DWORD                             needed = 0;
-        HANDLE                            file;
+    /* 4. Static fallback: oem56.inf default GUID */
+    guids[num_guids++] = PS3EYE_IFACE_GUID;
 
-        memset(&did, 0, sizeof(did));
-        did.cbSize = sizeof(did);
-
-        if (!SetupDiEnumDeviceInterfaces(set, NULL, &PS3EYE_IFACE_GUID, index, &did)) {
-            if (GetLastError() == ERROR_NO_MORE_ITEMS)
-                ps3eye_format_error(err, errlen, "no PS3 Eye found (device interface GUID)");
-            else
-                ps3eye_format_error(err, errlen, "SetupDiEnumDeviceInterfaces");
-            break;
-        }
-
-        SetupDiGetDeviceInterfaceDetailA(set, &did, NULL, 0, &needed, NULL);
-        if (needed == 0) {
-            ps3eye_format_error(err, errlen, "SetupDiGetDeviceInterfaceDetail(size)");
-            break;
-        }
-        detail = (PSP_DEVICE_INTERFACE_DETAIL_DATA_A)malloc(needed);
-        if (!detail) {
-            _snprintf_s(err, errlen, _TRUNCATE, "out of memory");
-            break;
-        }
-        detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_A);
-
-        if (!SetupDiGetDeviceInterfaceDetailA(set, &did, detail, needed, NULL, NULL)) {
-            ps3eye_format_error(err, errlen, "SetupDiGetDeviceInterfaceDetail");
-            free(detail);
+    for (g = 0; g < num_guids && !ok; g++) {
+        set = SetupDiGetClassDevsA(&guids[g], NULL, NULL,
+                                   DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+        if (set == INVALID_HANDLE_VALUE)
             continue;
-        }
 
-        /* The interface GUID is shared with any other libwdi-bound device,
-         * so filter by VID/PID. */
-        if (!contains_ci(detail->DevicePath, "vid_1415&pid_2000")) {
-            free(detail);
-            continue;
-        }
+        for (index = 0; ; index++) {
+            PSP_DEVICE_INTERFACE_DETAIL_DATA_A detail = NULL;
+            DWORD                             needed = 0;
+            HANDLE                            file;
 
-        file = CreateFileA(detail->DevicePath,
-                           GENERIC_READ | GENERIC_WRITE,
-                           FILE_SHARE_READ | FILE_SHARE_WRITE,
-                           NULL, OPEN_EXISTING,
-                           FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, NULL);
-        if (file == INVALID_HANDLE_VALUE) {
-            ps3eye_format_error(err, errlen, "CreateFile(device interface)");
+            memset(&did, 0, sizeof(did));
+            did.cbSize = sizeof(did);
+
+            if (!SetupDiEnumDeviceInterfaces(set, NULL, &guids[g], index, &did)) {
+                if (GetLastError() == ERROR_NO_MORE_ITEMS)
+                    ps3eye_format_error(err, errlen, "no PS3 Eye found (device interface GUID)");
+                else
+                    ps3eye_format_error(err, errlen, "SetupDiEnumDeviceInterfaces");
+                break;
+            }
+
+            SetupDiGetDeviceInterfaceDetailA(set, &did, NULL, 0, &needed, NULL);
+            if (needed == 0) {
+                ps3eye_format_error(err, errlen, "SetupDiGetDeviceInterfaceDetail(size)");
+                break;
+            }
+            detail = (PSP_DEVICE_INTERFACE_DETAIL_DATA_A)malloc(needed);
+            if (!detail) {
+                _snprintf_s(err, errlen, _TRUNCATE, "out of memory");
+                break;
+            }
+            detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_A);
+
+            if (!SetupDiGetDeviceInterfaceDetailA(set, &did, detail, needed, NULL, NULL)) {
+                ps3eye_format_error(err, errlen, "SetupDiGetDeviceInterfaceDetail");
+                free(detail);
+                continue;
+            }
+
+            /* The interface GUID is shared with any other libwdi-bound device,
+             * so filter by VID/PID. After the usbccgp split (Option A), the video
+             * function lives under the MI_00 child, so accept either the parent
+             * path (legacy binding) or the MI_00 path (split binding). */
+            if (!contains_ci(detail->DevicePath, "vid_1415&pid_2000")) {
+                free(detail);
+                continue;
+            }
+            /* Prefer the MI_00 path if both exist; it's the video function. */
+            bool is_mi00 = contains_ci(detail->DevicePath, "&mi_00");
+
+            /* If we already found an MI_00 candidate, skip non-MI_00 ones. */
+            static bool have_mi00 = false;
+            if (have_mi00 && !is_mi00) {
+                free(detail);
+                continue;
+            }
+            if (is_mi00)
+                have_mi00 = true;
+
+            file = CreateFileA(detail->DevicePath,
+                               GENERIC_READ | GENERIC_WRITE,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE,
+                               NULL, OPEN_EXISTING,
+                               FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, NULL);
+            if (file == INVALID_HANDLE_VALUE) {
+                ps3eye_format_error(err, errlen, "CreateFile(device interface)");
+                free(detail);
+                break;
+            }
+
+            d->file = file;
+            if (!WinUsb_Initialize(file, &d->iface)) {
+                ps3eye_format_error(err, errlen, "WinUsb_Initialize");
+                CloseHandle(file);
+                d->file = INVALID_HANDLE_VALUE;
+                free(detail);
+                break;
+            }
+
+            len = sizeof(speed);
+            if (!WinUsb_QueryDeviceInformation(d->iface, DEVICE_SPEED, &len, &speed))
+                speed = 0;
+            d->bus_speed = speed;
+
+            if (!bind_interface(d, err, errlen)) {
+                WinUsb_Free(d->iface);
+                CloseHandle(file);
+                d->iface = NULL;
+                d->file  = INVALID_HANDLE_VALUE;
+                free(detail);
+                break;
+            }
+
+            d->opened = true;
+            ok = true;
             free(detail);
             break;
         }
 
-        d->file = file;
-        if (!WinUsb_Initialize(file, &d->iface)) {
-            ps3eye_format_error(err, errlen, "WinUsb_Initialize");
-            CloseHandle(file);
-            d->file = INVALID_HANDLE_VALUE;
-            free(detail);
-            break;
-        }
-
-        len = sizeof(speed);
-        if (!WinUsb_QueryDeviceInformation(d->iface, DEVICE_SPEED, &len, &speed))
-            speed = 0;
-        d->bus_speed = speed;
-
-        if (!bind_interface(d, err, errlen)) {
-            WinUsb_Free(d->iface);
-            CloseHandle(file);
-            d->iface = NULL;
-            d->file  = INVALID_HANDLE_VALUE;
-            free(detail);
-            break;
-        }
-
-        d->opened = true;
-        ok = true;
-        free(detail);
-        break;
+        SetupDiDestroyDeviceInfoList(set);
     }
-
-    SetupDiDestroyDeviceInfoList(set);
     return ok;
 }
 

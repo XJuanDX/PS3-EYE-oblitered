@@ -66,7 +66,7 @@ $cflags = @(
     '/I', 'src'
 )
 
-$libs = @('winusb.lib', 'setupapi.lib')
+$libs = @('winusb.lib', 'setupapi.lib', 'advapi32.lib')
 
 function Build-Target {
     param(
