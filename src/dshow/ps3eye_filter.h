@@ -99,16 +99,19 @@ public:
     // Internal helpers
     capture_session *GetSession() { return &m_session; }
     void NotifyEvent(long EventCode, LONG_PTR EventParam1, LONG_PTR EventParam2);
+    void SetConfiguredMode(ps3eye_mode mode, uint16_t fps);
+    HRESULT EnsureSessionOpen();
 
 private:
     std::atomic<long>       m_cRef;
     FILTER_STATE            m_state;
     IReferenceClock        *m_pClock;
     IFilterGraph           *m_pGraph;
-    IMediaEventSink        *m_pEventSink;
     PS3EyePin              *m_pPin;
     capture_session         m_session;
     bool                    m_bSessionOpened;
+    ps3eye_mode             m_configuredMode;
+    uint16_t                m_configuredFps;
     CRITICAL_SECTION        m_csFilter;
     WCHAR                   m_wszName[128];
 };

@@ -25,11 +25,38 @@ void FreeMediaType(AM_MEDIA_TYPE *pmt)
     }
 }
 
-// Helper: Fill an AM_MEDIA_TYPE with 640x480 YUY2 @ 30fps
-HRESULT CreateMediaType(AM_MEDIA_TYPE *pmt)
+// Helper: Fill an AM_MEDIA_TYPE with specified resolution & framerate
+HRESULT CreateMediaTypeForIndex(int index, AM_MEDIA_TYPE *pmt)
 {
     if (!pmt) return E_POINTER;
     ZeroMemory(pmt, sizeof(AM_MEDIA_TYPE));
+
+    long width = 640;
+    long height = 480;
+    REFERENCE_TIME avgTime = 333333; // 30 fps
+    DWORD fps = 30;
+
+    if (index == 0) {
+        // 640x480 @ 30 fps
+        width = 640;
+        height = 480;
+        avgTime = 333333;
+        fps = 30;
+    } else if (index == 1) {
+        // 320x240 @ 60 fps
+        width = 320;
+        height = 240;
+        avgTime = 166666;
+        fps = 60;
+    } else if (index == 2) {
+        // 320x240 @ 30 fps
+        width = 320;
+        height = 240;
+        avgTime = 333333;
+        fps = 30;
+    } else {
+        return E_INVALIDARG;
+    }
 
     VIDEOINFOHEADER *pvi = (VIDEOINFOHEADER *)CoTaskMemAlloc(sizeof(VIDEOINFOHEADER));
     if (!pvi) return E_OUTOFMEMORY;
@@ -37,21 +64,21 @@ HRESULT CreateMediaType(AM_MEDIA_TYPE *pmt)
 
     pvi->rcSource.left   = 0;
     pvi->rcSource.top    = 0;
-    pvi->rcSource.right  = 640;
-    pvi->rcSource.bottom = 480;
+    pvi->rcSource.right  = width;
+    pvi->rcSource.bottom = height;
     pvi->rcTarget = pvi->rcSource;
 
-    pvi->dwBitRate = 640 * 480 * 16 * 30;
-    pvi->AvgTimePerFrame = 333333; // 30 fps (100ns units)
+    pvi->dwBitRate = width * height * 16 * fps;
+    pvi->AvgTimePerFrame = avgTime;
 
     BITMAPINFOHEADER &bmi = pvi->bmiHeader;
     bmi.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.biWidth = 640;
-    bmi.biHeight = 480;
+    bmi.biWidth = width;
+    bmi.biHeight = height;
     bmi.biPlanes = 1;
     bmi.biBitCount = 16;
     bmi.biCompression = MAKEFOURCC('Y', 'U', 'Y', '2');
-    bmi.biSizeImage = 640 * 480 * 2;
+    bmi.biSizeImage = width * height * 2;
 
     pmt->majortype = MEDIATYPE_Video;
     pmt->subtype = MEDIASUBTYPE_YUY2;
@@ -64,6 +91,11 @@ HRESULT CreateMediaType(AM_MEDIA_TYPE *pmt)
     pmt->pbFormat = (BYTE *)pvi;
 
     return S_OK;
+}
+
+HRESULT CreateMediaType(AM_MEDIA_TYPE *pmt)
+{
+    return CreateMediaTypeForIndex(0, pmt);
 }
 
 HRESULT CopyMediaType(AM_MEDIA_TYPE *pmtTarget, const AM_MEDIA_TYPE *pmtSource)
@@ -145,6 +177,7 @@ class CEnumMediaTypes : public IEnumMediaTypes
 {
     std::atomic<long> m_cRef{1};
     ULONG             m_iIndex{0};
+    const ULONG       m_cTypes{3};
 public:
     CEnumMediaTypes(ULONG idx = 0) : m_iIndex(idx) {}
     STDMETHODIMP QueryInterface(REFIID riid, void **ppv) override {
@@ -167,12 +200,14 @@ public:
         if (!ppMediaTypes) return E_POINTER;
         if (cMediaTypes > 1 && !pcFetched) return E_INVALIDARG;
         ULONG fetched = 0;
-        if (m_iIndex == 0 && cMediaTypes > 0) {
+        while (m_iIndex < m_cTypes && fetched < cMediaTypes) {
             AM_MEDIA_TYPE *pmt = (AM_MEDIA_TYPE*)CoTaskMemAlloc(sizeof(AM_MEDIA_TYPE));
-            if (pmt && SUCCEEDED(CreateMediaType(pmt))) {
-                ppMediaTypes[0] = pmt;
+            if (pmt && SUCCEEDED(CreateMediaTypeForIndex(m_iIndex, pmt))) {
+                ppMediaTypes[fetched++] = pmt;
                 m_iIndex++;
-                fetched = 1;
+            } else {
+                if (pmt) CoTaskMemFree(pmt);
+                break;
             }
         }
         if (pcFetched) *pcFetched = fetched;
@@ -180,7 +215,7 @@ public:
     }
     STDMETHODIMP Skip(ULONG cMediaTypes) override {
         m_iIndex += cMediaTypes;
-        return (m_iIndex <= 1) ? S_OK : S_FALSE;
+        return (m_iIndex <= m_cTypes) ? S_OK : S_FALSE;
     }
     STDMETHODIMP Reset() override {
         m_iIndex = 0;
@@ -263,29 +298,95 @@ STDMETHODIMP PS3EyePin::Connect(IPin *pReceivePin, const AM_MEDIA_TYPE *pmt)
         return VFW_E_ALREADY_CONNECTED;
     }
 
-    AM_MEDIA_TYPE mt;
-    ZeroMemory(&mt, sizeof(mt));
+    HRESULT hr = VFW_E_NO_ACCEPTABLE_TYPES;
+
     if (pmt) {
-        if (FAILED(QueryAccept(pmt))) {
+        if (QueryAccept(pmt) != S_OK) {
             LeaveCriticalSection(&m_csPin);
             return VFW_E_TYPE_NOT_ACCEPTED;
         }
-        CopyMediaType(&mt, pmt);
+        hr = pReceivePin->ReceiveConnection(this, pmt);
+        if (SUCCEEDED(hr)) {
+            FreeMediaType(&m_mtCurrent);
+            CopyMediaType(&m_mtCurrent, pmt);
+        }
     } else {
-        CreateMediaType(&mt);
+        // Negotiate: try our proposed types in order
+        for (int i = 0; i < 3; i++) {
+            AM_MEDIA_TYPE mt;
+            if (SUCCEEDED(CreateMediaTypeForIndex(i, &mt))) {
+                if (pReceivePin->QueryAccept(&mt) == S_OK) {
+                    hr = pReceivePin->ReceiveConnection(this, &mt);
+                    if (SUCCEEDED(hr)) {
+                        FreeMediaType(&m_mtCurrent);
+                        CopyMediaType(&m_mtCurrent, &mt);
+                        FreeMediaType(&mt);
+                        break;
+                    }
+                }
+                FreeMediaType(&mt);
+            }
+        }
+
+        // If receiver didn't accept via QueryAccept, try proposing directly
+        if (FAILED(hr)) {
+            for (int i = 0; i < 3; i++) {
+                AM_MEDIA_TYPE mt;
+                if (SUCCEEDED(CreateMediaTypeForIndex(i, &mt))) {
+                    hr = pReceivePin->ReceiveConnection(this, &mt);
+                    if (SUCCEEDED(hr)) {
+                        FreeMediaType(&m_mtCurrent);
+                        CopyMediaType(&m_mtCurrent, &mt);
+                        FreeMediaType(&mt);
+                        break;
+                    }
+                    FreeMediaType(&mt);
+                }
+            }
+        }
+
+        // If still failed, inspect receiver's media types
+        if (FAILED(hr)) {
+            IEnumMediaTypes *pEnum = nullptr;
+            if (SUCCEEDED(pReceivePin->EnumMediaTypes(&pEnum)) && pEnum) {
+                AM_MEDIA_TYPE *pRecvMt = nullptr;
+                ULONG fetched = 0;
+                while (pEnum->Next(1, &pRecvMt, &fetched) == S_OK && fetched == 1) {
+                    if (QueryAccept(pRecvMt) == S_OK) {
+                        hr = pReceivePin->ReceiveConnection(this, pRecvMt);
+                        if (SUCCEEDED(hr)) {
+                            FreeMediaType(&m_mtCurrent);
+                            CopyMediaType(&m_mtCurrent, pRecvMt);
+                            FreeMediaType(pRecvMt);
+                            CoTaskMemFree(pRecvMt);
+                            break;
+                        }
+                    }
+                    FreeMediaType(pRecvMt);
+                    CoTaskMemFree(pRecvMt);
+                }
+                pEnum->Release();
+            }
+        }
     }
 
-    HRESULT hr = pReceivePin->ReceiveConnection(this, &mt);
     if (SUCCEEDED(hr)) {
         m_pConnectedPin = pReceivePin;
         m_pConnectedPin->AddRef();
-        FreeMediaType(&m_mtCurrent);
-        CopyMediaType(&m_mtCurrent, &mt);
         m_bConnected = true;
 
         pReceivePin->QueryInterface(IID_IMemInputPin, (void**)&m_pMemInputPin);
+
+        // Update configured mode from m_mtCurrent
+        VIDEOINFOHEADER *pvi = (VIDEOINFOHEADER*)m_mtCurrent.pbFormat;
+        if (pvi && pvi->bmiHeader.biWidth == 320) {
+            uint16_t fps = (pvi->AvgTimePerFrame <= 200000) ? 60 : 30;
+            m_pFilter->SetConfiguredMode(PS3EYE_MODE_QVGA_320x240, fps);
+        } else {
+            m_pFilter->SetConfiguredMode(PS3EYE_MODE_VGA_640x480, 30);
+        }
     }
-    FreeMediaType(&mt);
+
     LeaveCriticalSection(&m_csPin);
     return hr;
 }
@@ -376,15 +477,18 @@ STDMETHODIMP PS3EyePin::QueryId(LPWSTR *Id)
 STDMETHODIMP PS3EyePin::QueryAccept(const AM_MEDIA_TYPE *pmt)
 {
     if (!pmt) return E_POINTER;
-    if (pmt->majortype != MEDIATYPE_Video) return VFW_E_INVALIDMEDIATYPE;
-    if (pmt->subtype != MEDIASUBTYPE_YUY2) return VFW_E_INVALIDMEDIATYPE;
-    if (pmt->formattype != FORMAT_VideoInfo || !pmt->pbFormat) return VFW_E_INVALIDMEDIATYPE;
+    if (pmt->majortype != MEDIATYPE_Video) return S_FALSE;
+    if (pmt->subtype != MEDIASUBTYPE_YUY2) return S_FALSE;
+    if (pmt->formattype != FORMAT_VideoInfo || !pmt->pbFormat) return S_FALSE;
 
     VIDEOINFOHEADER *pvi = (VIDEOINFOHEADER*)pmt->pbFormat;
-    if (pvi->bmiHeader.biWidth != 640 || abs(pvi->bmiHeader.biHeight) != 480) {
-        return VFW_E_INVALIDMEDIATYPE;
+    long w = pvi->bmiHeader.biWidth;
+    long h = abs(pvi->bmiHeader.biHeight);
+
+    if ((w == 640 && h == 480) || (w == 320 && h == 240)) {
+        return S_OK;
     }
-    return S_OK;
+    return S_FALSE;
 }
 
 STDMETHODIMP PS3EyePin::EnumMediaTypes(IEnumMediaTypes **ppEnum)
@@ -410,7 +514,7 @@ STDMETHODIMP PS3EyePin::NewSegment(REFERENCE_TIME, REFERENCE_TIME, double) { ret
 STDMETHODIMP PS3EyePin::SetFormat(AM_MEDIA_TYPE *pmt)
 {
     if (!pmt) return E_POINTER;
-    if (FAILED(QueryAccept(pmt))) return VFW_E_INVALIDMEDIATYPE;
+    if (QueryAccept(pmt) != S_OK) return VFW_E_INVALIDMEDIATYPE;
     EnterCriticalSection(&m_csPin);
     if (m_bActive) {
         LeaveCriticalSection(&m_csPin);
@@ -418,6 +522,16 @@ STDMETHODIMP PS3EyePin::SetFormat(AM_MEDIA_TYPE *pmt)
     }
     FreeMediaType(&m_mtCurrent);
     CopyMediaType(&m_mtCurrent, pmt);
+
+    // Update configured mode on filter
+    VIDEOINFOHEADER *pvi = (VIDEOINFOHEADER*)pmt->pbFormat;
+    if (pvi && pvi->bmiHeader.biWidth == 320) {
+        uint16_t fps = (pvi->AvgTimePerFrame <= 200000) ? 60 : 30;
+        m_pFilter->SetConfiguredMode(PS3EYE_MODE_QVGA_320x240, fps);
+    } else {
+        m_pFilter->SetConfiguredMode(PS3EYE_MODE_VGA_640x480, 30);
+    }
+
     LeaveCriticalSection(&m_csPin);
     return S_OK;
 }
@@ -436,7 +550,7 @@ STDMETHODIMP PS3EyePin::GetFormat(AM_MEDIA_TYPE **ppmt)
 STDMETHODIMP PS3EyePin::GetNumberOfCapabilities(int *piCount, int *piSize)
 {
     if (!piCount || !piSize) return E_POINTER;
-    *piCount = 1;
+    *piCount = 3;
     *piSize  = sizeof(VIDEO_STREAM_CONFIG_CAPS);
     return S_OK;
 }
@@ -444,17 +558,27 @@ STDMETHODIMP PS3EyePin::GetNumberOfCapabilities(int *piCount, int *piSize)
 STDMETHODIMP PS3EyePin::GetStreamCaps(int iIndex, AM_MEDIA_TYPE **ppmt, BYTE *pSCC)
 {
     if (!ppmt || !pSCC) return E_POINTER;
-    if (iIndex != 0) return S_FALSE;
+    if (iIndex < 0 || iIndex >= 3) return S_FALSE;
 
     *ppmt = (AM_MEDIA_TYPE*)CoTaskMemAlloc(sizeof(AM_MEDIA_TYPE));
     if (!*ppmt) return E_OUTOFMEMORY;
-    CreateMediaType(*ppmt);
+    if (FAILED(CreateMediaTypeForIndex(iIndex, *ppmt))) {
+        CoTaskMemFree(*ppmt);
+        *ppmt = nullptr;
+        return E_FAIL;
+    }
 
     VIDEO_STREAM_CONFIG_CAPS *pCaps = (VIDEO_STREAM_CONFIG_CAPS*)pSCC;
     ZeroMemory(pCaps, sizeof(VIDEO_STREAM_CONFIG_CAPS));
     pCaps->guid = FORMAT_VideoInfo;
     pCaps->VideoStandard = AnalogVideo_None;
-    pCaps->InputSize.cx = 640; pCaps->InputSize.cy = 480;
+
+    long width = (iIndex == 0) ? 640 : 320;
+    long height = (iIndex == 0) ? 480 : 240;
+    REFERENCE_TIME minInterval = (iIndex == 1) ? 166666 : 333333;
+    REFERENCE_TIME maxInterval = 666666; // down to 15 fps
+
+    pCaps->InputSize.cx = width; pCaps->InputSize.cy = height;
     pCaps->MinCroppingSize = pCaps->InputSize;
     pCaps->MaxCroppingSize = pCaps->InputSize;
     pCaps->CropGranularityX = 1; pCaps->CropGranularityY = 1;
@@ -462,10 +586,10 @@ STDMETHODIMP PS3EyePin::GetStreamCaps(int iIndex, AM_MEDIA_TYPE **ppmt, BYTE *pS
     pCaps->MinOutputSize = pCaps->InputSize;
     pCaps->MaxOutputSize = pCaps->InputSize;
     pCaps->OutputGranularityX = 1; pCaps->OutputGranularityY = 1;
-    pCaps->MinFrameInterval = 333333;
-    pCaps->MaxFrameInterval = 333333;
-    pCaps->MinBitsPerSecond = 640 * 480 * 16 * 30;
-    pCaps->MaxBitsPerSecond = pCaps->MinBitsPerSecond;
+    pCaps->MinFrameInterval = minInterval;
+    pCaps->MaxFrameInterval = maxInterval;
+    pCaps->MinBitsPerSecond = width * height * 16 * 15;
+    pCaps->MaxBitsPerSecond = width * height * 16 * ((iIndex == 1) ? 60 : 30);
 
     return S_OK;
 }
@@ -506,6 +630,9 @@ HRESULT PS3EyePin::Active()
         return S_OK;
     }
 
+    VIDEOINFOHEADER *pvi = (VIDEOINFOHEADER*)m_mtCurrent.pbFormat;
+    long bufferSize = (pvi && pvi->bmiHeader.biSizeImage > 0) ? pvi->bmiHeader.biSizeImage : 614400;
+
     if (!m_pAllocator) {
         HRESULT hr = m_pMemInputPin->GetAllocator(&m_pAllocator);
         if (FAILED(hr) || !m_pAllocator) {
@@ -516,7 +643,7 @@ HRESULT PS3EyePin::Active()
                 return hr;
             }
         }
-        ALLOCATOR_PROPERTIES prop = { 3, 614400, 1, 0 };
+        ALLOCATOR_PROPERTIES prop = { 3, bufferSize, 1, 0 };
         ALLOCATOR_PROPERTIES actual;
         m_pAllocator->SetProperties(&prop, &actual);
         m_pMemInputPin->NotifyAllocator(m_pAllocator, FALSE);
@@ -560,7 +687,10 @@ DWORD WINAPI PS3EyePin::ThreadProc(LPVOID pParam)
 
 void PS3EyePin::DoBufferProcessingLoop()
 {
-    REFERENCE_TIME rtFrameDuration = 333333; // 30 fps
+    VIDEOINFOHEADER *pvi = (VIDEOINFOHEADER*)m_mtCurrent.pbFormat;
+    REFERENCE_TIME rtFrameDuration = (pvi && pvi->AvgTimePerFrame > 0) ? pvi->AvgTimePerFrame : 333333;
+    long expectedSize = (pvi && pvi->bmiHeader.biSizeImage > 0) ? pvi->bmiHeader.biSizeImage : 614400;
+
     uint64_t frameIndex = 0;
     capture_session *session = m_pFilter->GetSession();
 
@@ -587,7 +717,7 @@ void PS3EyePin::DoBufferProcessingLoop()
             REFERENCE_TIME rtEnd   = rtStart + rtFrameDuration;
             pSample->SetTime(&rtStart, &rtEnd);
             pSample->SetSyncPoint(TRUE);
-            pSample->SetActualDataLength(614400);
+            pSample->SetActualDataLength(expectedSize);
 
             hr = m_pMemInputPin->Receive(pSample);
             pSample->Release();
@@ -615,28 +745,20 @@ PS3EyeFilter::PS3EyeFilter()
     , m_state(State_Stopped)
     , m_pClock(nullptr)
     , m_pGraph(nullptr)
-    , m_pEventSink(nullptr)
     , m_pPin(nullptr)
     , m_bSessionOpened(false)
+    , m_configuredMode(PS3EYE_MODE_VGA_640x480)
+    , m_configuredFps(30)
 {
     InitializeCriticalSection(&m_csFilter);
     wcscpy_s(m_wszName, L"PS3 Eye Camera");
     m_pPin = new PS3EyePin(this);
-
-    char err[256];
-    if (capture_session_open(&m_session, PS3EYE_MODE_VGA_640x480, 30, err, sizeof(err))) {
-        m_bSessionOpened = true;
-    }
     InterlockedIncrement(&g_cLock);
 }
 
 PS3EyeFilter::~PS3EyeFilter()
 {
     Stop();
-    if (m_bSessionOpened) {
-        capture_session_close(&m_session);
-        m_bSessionOpened = false;
-    }
     if (m_pPin) {
         m_pPin->Release();
         m_pPin = nullptr;
@@ -645,12 +767,28 @@ PS3EyeFilter::~PS3EyeFilter()
         m_pClock->Release();
         m_pClock = nullptr;
     }
-    if (m_pEventSink) {
-        m_pEventSink->Release();
-        m_pEventSink = nullptr;
-    }
     DeleteCriticalSection(&m_csFilter);
     InterlockedDecrement(&g_cLock);
+}
+
+void PS3EyeFilter::SetConfiguredMode(ps3eye_mode mode, uint16_t fps)
+{
+    EnterCriticalSection(&m_csFilter);
+    m_configuredMode = mode;
+    m_configuredFps  = fps;
+    LeaveCriticalSection(&m_csFilter);
+}
+
+HRESULT PS3EyeFilter::EnsureSessionOpen()
+{
+    if (m_bSessionOpened) return S_OK;
+
+    char err[256];
+    if (!capture_session_open(&m_session, m_configuredMode, m_configuredFps, err, sizeof(err))) {
+        return E_FAIL;
+    }
+    m_bSessionOpened = true;
+    return S_OK;
 }
 
 STDMETHODIMP PS3EyeFilter::QueryInterface(REFIID riid, void **ppv)
@@ -690,7 +828,11 @@ STDMETHODIMP PS3EyeFilter::Stop()
     EnterCriticalSection(&m_csFilter);
     if (m_state != State_Stopped) {
         if (m_pPin) m_pPin->Inactive();
-        if (m_bSessionOpened) capture_session_stop(&m_session);
+        if (m_bSessionOpened) {
+            capture_session_stop(&m_session);
+            capture_session_close(&m_session);
+            m_bSessionOpened = false;
+        }
         m_state = State_Stopped;
     }
     LeaveCriticalSection(&m_csFilter);
@@ -701,9 +843,17 @@ STDMETHODIMP PS3EyeFilter::Pause()
 {
     EnterCriticalSection(&m_csFilter);
     if (m_state == State_Stopped) {
+        HRESULT hr = EnsureSessionOpen();
+        if (FAILED(hr)) {
+            LeaveCriticalSection(&m_csFilter);
+            return hr;
+        }
         char err[256];
-        if (m_bSessionOpened) {
-            capture_session_start(&m_session, err, sizeof(err));
+        if (!capture_session_start(&m_session, err, sizeof(err))) {
+            capture_session_close(&m_session);
+            m_bSessionOpened = false;
+            LeaveCriticalSection(&m_csFilter);
+            return E_FAIL;
         }
         if (m_pPin) m_pPin->Active();
     }
@@ -716,7 +866,11 @@ STDMETHODIMP PS3EyeFilter::Run(REFERENCE_TIME)
 {
     EnterCriticalSection(&m_csFilter);
     if (m_state == State_Stopped) {
-        Pause();
+        HRESULT hr = Pause();
+        if (FAILED(hr)) {
+            LeaveCriticalSection(&m_csFilter);
+            return hr;
+        }
     }
     m_state = State_Running;
     LeaveCriticalSection(&m_csFilter);
@@ -786,14 +940,7 @@ STDMETHODIMP PS3EyeFilter::QueryFilterInfo(FILTER_INFO *pInfo)
 STDMETHODIMP PS3EyeFilter::JoinFilterGraph(IFilterGraph *pGraph, LPCWSTR pName)
 {
     EnterCriticalSection(&m_csFilter);
-    m_pGraph = pGraph;
-    if (m_pEventSink) {
-        m_pEventSink->Release();
-        m_pEventSink = nullptr;
-    }
-    if (m_pGraph) {
-        m_pGraph->QueryInterface(IID_IMediaEventSink, (void**)&m_pEventSink);
-    }
+    m_pGraph = pGraph; // Weak reference per DirectShow spec
     if (pName) {
         wcscpy_s(m_wszName, pName);
     }
@@ -814,8 +961,12 @@ STDMETHODIMP PS3EyeFilter::QueryVendorInfo(LPWSTR *pVendorInfo)
 void PS3EyeFilter::NotifyEvent(long EventCode, LONG_PTR EventParam1, LONG_PTR EventParam2)
 {
     EnterCriticalSection(&m_csFilter);
-    if (m_pEventSink) {
-        m_pEventSink->Notify(EventCode, EventParam1, EventParam2);
+    if (m_pGraph) {
+        IMediaEventSink *pSink = nullptr;
+        if (SUCCEEDED(m_pGraph->QueryInterface(IID_IMediaEventSink, (void**)&pSink)) && pSink) {
+            pSink->Notify(EventCode, EventParam1, EventParam2);
+            pSink->Release();
+        }
     }
     LeaveCriticalSection(&m_csFilter);
 }

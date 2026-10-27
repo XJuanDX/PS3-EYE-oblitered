@@ -141,23 +141,30 @@ try {
     Build-Target -Name 'test_capture_session' -Main 'tests\test_capture_session.c' -ObjDir 'build\tests'
     Build-DShowDll
 
-    # Test DShow Render
+    # DShow Tests
+    $testObj = "build\tests\"
+    $testFlags = @('/nologo', '/W4', '/O2', '/std:c++17', '/EHsc', '/D_CRT_SECURE_NO_WARNINGS', '/wd5105', '/I', 'src', '/I', 'src\dshow', "/Fo$testObj")
+    $testLibs = @('ole32.lib', 'oleaut32.lib', 'strmiids.lib')
+
+    $filterTestOut = "build\test_dshow_filter.exe"
+    Write-Host "building $filterTestOut"
+    & cl.exe @testFlags tests\test_dshow_filter.cpp @testLibs "/Fe$filterTestOut"
+    if ($LASTEXITCODE -ne 0) {
+        throw "compilation failed for test_dshow_filter.exe (exit $LASTEXITCODE)"
+    }
+
     $renderOut = "build\test_dshow_render.exe"
-    $renderSources = @('tests\test_dshow_render.cpp')
     Write-Host "building $renderOut"
-    & cl.exe @testFlags @renderSources @testLibs /Fe$renderOut
+    & cl.exe @testFlags tests\test_dshow_render.cpp @testLibs "/Fe$renderOut"
     if ($LASTEXITCODE -ne 0) {
         throw "compilation failed for test_dshow_render.exe (exit $LASTEXITCODE)"
     }
-    $testOut = "build\test_dshow_filter.exe"
-    $testObj = "build\tests\"
-    $testFlags = @('/nologo', '/W4', '/O2', '/std:c++17', '/EHsc', '/D_CRT_SECURE_NO_WARNINGS', '/wd5105', '/I', 'src', '/I', 'src\dshow', "/Fo$testObj", "/Fe$testOut")
-    $testSources = @('tests\test_dshow_filter.cpp')
-    $testLibs = @('ole32.lib', 'oleaut32.lib', 'strmiids.lib')
-    Write-Host "building $testOut"
-    & cl.exe @testFlags @testSources @testLibs
+
+    $compatTestOut = "build\test_dshow_browser_compat.exe"
+    Write-Host "building $compatTestOut"
+    & cl.exe @testFlags tests\test_dshow_browser_compat.cpp @testLibs "/Fe$compatTestOut"
     if ($LASTEXITCODE -ne 0) {
-        throw "compilation failed for test_dshow_filter.exe (exit $LASTEXITCODE)"
+        throw "compilation failed for test_dshow_browser_compat.exe (exit $LASTEXITCODE)"
     }
 
     Write-Host ''

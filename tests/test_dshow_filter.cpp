@@ -73,7 +73,7 @@ int main()
 
     int count = 0, size = 0;
     hr = pConfig->GetNumberOfCapabilities(&count, &size);
-    assert(SUCCEEDED(hr) && count == 1 && size == sizeof(VIDEO_STREAM_CONFIG_CAPS));
+    assert(SUCCEEDED(hr) && count >= 1 && size == sizeof(VIDEO_STREAM_CONFIG_CAPS));
 
     AM_MEDIA_TYPE *pmt = nullptr;
     VIDEO_STREAM_CONFIG_CAPS caps;
