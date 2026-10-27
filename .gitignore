@@ -36,11 +36,13 @@ secrets*
 id_rsa*
 .env
 
-# IDE / editor
+# IDE / editor / tools
 .vs/
 .vscode/
 *.user
 *.suo
+.codegraph/
+.cursor/
 
 # OS noise
 Thumbs.db
