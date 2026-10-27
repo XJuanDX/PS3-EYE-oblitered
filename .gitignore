@@ -11,6 +11,7 @@ build/
 # Driver build output
 *.sys
 *.cat
+!usb_device.cat
 *.inf
 !usb_device_video_only.inf
 
