@@ -27,7 +27,7 @@ if ($Clean -and (Test-Path -LiteralPath $build)) {
     Remove-Item -LiteralPath $build -Recurse -Force
 }
 
-foreach ($d in @($build, (Join-Path $build 'probe'), (Join-Path $build 'grab'))) {
+foreach ($d in @($build, (Join-Path $build 'probe'), (Join-Path $build 'grab'), (Join-Path $build 'audio'))) {
     New-Item -ItemType Directory -Force -Path $d | Out-Null
 }
 
@@ -91,6 +91,7 @@ Push-Location $root
 try {
     Build-Target -Name 'ps3eye-probe' -Main 'src\probe_main.c' -ObjDir 'build\probe'
     Build-Target -Name 'ps3eye-grab'  -Main 'src\grab_main.c'  -ObjDir 'build\grab'
+    Build-Target -Name 'ps3eye-audio' -Main 'src\audio_main.c' -ObjDir 'build\audio'
 
     Write-Host ''
     Write-Host 'artifacts:'

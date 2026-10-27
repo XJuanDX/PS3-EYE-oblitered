@@ -226,15 +226,15 @@ void ps3eye_close(ps3eye_dev *d)
 /* control transfers                                                   */
 /* ------------------------------------------------------------------ */
 
-static bool do_control(ps3eye_dev *d, uint8_t direction, uint8_t request,
-                       uint16_t value, uint16_t index, void *data, uint32_t len,
-                       uint32_t *transferred)
+static bool do_control_type(ps3eye_dev *d, uint8_t request_type, uint8_t request,
+                            uint16_t value, uint16_t index, void *data,
+                            uint32_t len, uint32_t *transferred)
 {
     WINUSB_SETUP_PACKET setup;
     ULONG               got = 0;
 
     memset(&setup, 0, sizeof(setup));
-    setup.RequestType = (UCHAR)(0x40 | (direction ? 0x80 : 0x00)); /* vendor, device */
+    setup.RequestType = request_type;
     setup.Request     = request;
     setup.Value       = value;
     setup.Index       = index;
@@ -246,6 +246,22 @@ static bool do_control(ps3eye_dev *d, uint8_t direction, uint8_t request,
     if (transferred)
         *transferred = got;
     return true;
+}
+
+bool ps3eye_ctrl_raw(ps3eye_dev *d, uint8_t request_type, uint8_t request,
+                     uint16_t value, uint16_t index, void *data, uint32_t len,
+                     uint32_t *transferred)
+{
+    return do_control_type(d, request_type, request, value, index, data, len,
+                           transferred);
+}
+
+static bool do_control(ps3eye_dev *d, uint8_t direction, uint8_t request,
+                       uint16_t value, uint16_t index, void *data, uint32_t len,
+                       uint32_t *transferred)
+{
+    return do_control_type(d, (uint8_t)(0x40 | (direction ? 0x80 : 0x00)),
+                           request, value, index, data, len, transferred);
 }
 
 bool ps3eye_ctrl_out(ps3eye_dev *d, uint8_t request, uint16_t value,
@@ -554,6 +570,72 @@ void ps3eye_probe_audio(ps3eye_dev *d, FILE *out)
         }
         WinUsb_Free(a);
     }
+}
+
+bool ps3eye_probe_audio_alt(ps3eye_dev *d, FILE *out)
+{
+    WINUSB_INTERFACE_HANDLE a = NULL;
+    USB_INTERFACE_DESCRIPTOR ifd;
+    bool restored = false;
+    bool selected = false;
+
+    fprintf(out, "\n  audio alternate-setting probe:\n");
+
+    if (!WinUsb_GetAssociatedInterface(d->iface, 1, &a)) {
+        fprintf(out, "    cannot reach the audio streaming interface "
+                     "(error %lu)\n", (unsigned long)GetLastError());
+        return false;
+    }
+
+    memset(&ifd, 0, sizeof(ifd));
+    if (WinUsb_QueryInterfaceSettings(a, 1, &ifd)) {
+        fprintf(out, "    interface %u alt 1  : %u endpoint(s), "
+                     "class %02x/%02x/%02x\n",
+                (unsigned)ifd.bInterfaceNumber, (unsigned)ifd.bNumEndpoints,
+                (unsigned)ifd.bInterfaceClass, (unsigned)ifd.bInterfaceSubClass,
+                (unsigned)ifd.bInterfaceProtocol);
+    }
+
+    SetLastError(0);
+    if (WinUsb_SetCurrentAlternateSetting(a, 1)) {
+        selected = true;
+        fprintf(out, "    SET_INTERFACE alt 1 : ok\n");
+    } else {
+        fprintf(out, "    SET_INTERFACE alt 1 : failed (error %lu)\n",
+                (unsigned long)GetLastError());
+    }
+
+    if (selected && ifd.bNumEndpoints > 0) {
+        WINUSB_PIPE_INFORMATION p;
+        unsigned                i;
+
+        for (i = 0; i < ifd.bNumEndpoints; i++) {
+            memset(&p, 0, sizeof(p));
+            if (!WinUsb_QueryPipe(a, 1, (UCHAR)i, &p)) {
+                fprintf(out, "      pipe %u            : query failed "
+                             "(error %lu)\n", i, (unsigned long)GetLastError());
+                continue;
+            }
+            fprintf(out, "      pipe %u            : EP 0x%02x, type %s, "
+                         "max packet %u, interval %u\n",
+                    i, (unsigned)p.PipeId,
+                    p.PipeType == UsbdPipeTypeIsochronous ? "isochronous" :
+                    p.PipeType == UsbdPipeTypeBulk        ? "bulk" :
+                    p.PipeType == UsbdPipeTypeInterrupt   ? "interrupt" : "control",
+                    (unsigned)p.MaximumPacketSize, (unsigned)p.Interval);
+        }
+    }
+
+    if (selected) {
+        SetLastError(0);
+        restored = WinUsb_SetCurrentAlternateSetting(a, 0) != FALSE;
+        fprintf(out, "    SET_INTERFACE alt 0 : %s%s\n",
+                restored ? "ok (device restored)" : "FAILED",
+                restored ? "" : " — the audio interface is left at alt 1");
+    }
+
+    WinUsb_Free(a);
+    return restored;
 }
 
 /* ------------------------------------------------------------------ */

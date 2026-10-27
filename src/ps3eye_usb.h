@@ -43,6 +43,12 @@ bool ps3eye_ctrl_in(ps3eye_dev *d, uint8_t request, uint16_t value,
                     uint16_t index, void *data, uint32_t len,
                     uint32_t *transferred);
 
+/* Same, but with the full bmRequestType, so class requests addressed to an
+ * endpoint (0x22 = class | endpoint | host-to-device) can be issued. */
+bool ps3eye_ctrl_raw(ps3eye_dev *d, uint8_t request_type, uint8_t request,
+                     uint16_t value, uint16_t index, void *data, uint32_t len,
+                     uint32_t *transferred);
+
 /* Human-readable dump of the configuration descriptor and the WinUSB pipe
  * map. Read-only: performs no vendor requests. */
 void ps3eye_dump_descriptors(ps3eye_dev *d, FILE *out);
@@ -51,6 +57,12 @@ void ps3eye_dump_descriptors(ps3eye_dev *d, FILE *out);
  * are addressable through the current WinUSB binding. Read-only: only queries
  * handles and descriptors, never issues SET_INTERFACE or SET_CONFIGURATION. */
 void ps3eye_probe_audio(ps3eye_dev *d, FILE *out);
+
+/* Switch the audio streaming interface to alt 1, inspect the isochronous
+ * endpoint and switch straight back to alt 0. This is the only write the probe
+ * performs, and it is undone before returning. Returns true if alt 0 was
+ * restored (i.e. the device is left exactly as it was found). */
+bool ps3eye_probe_audio_alt(ps3eye_dev *d, FILE *out);
 
 /* ---- Pipelined overlapped bulk reader -------------------------------- */
 

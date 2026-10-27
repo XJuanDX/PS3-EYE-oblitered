@@ -12,15 +12,18 @@
 
 static void usage(void)
 {
-    printf("usage: ps3eye-probe [--descriptors-only]\n"
+    printf("usage: ps3eye-probe [--descriptors-only] [--audio-alt]\n"
            "\n"
            "  --descriptors-only  do not touch the device; only read the USB\n"
-           "                      configuration and the WinUSB pipe map\n");
+           "                      configuration and the WinUSB pipe map\n"
+           "  --audio-alt         also select the audio streaming alt setting and\n"
+           "                      inspect its endpoint, then restore alt 0\n");
 }
 
 int main(int argc, char **argv)
 {
     bool        identify = true;
+    bool        audio_alt = false;
     char        err[512];
     ps3eye_dev  dev;
     int         i;
@@ -28,6 +31,8 @@ int main(int argc, char **argv)
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--descriptors-only") == 0) {
             identify = false;
+        } else if (strcmp(argv[i], "--audio-alt") == 0) {
+            audio_alt = true;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             usage();
             return 0;
@@ -47,6 +52,9 @@ int main(int argc, char **argv)
            PS3EYE_VID, PS3EYE_PID);
 
     ps3eye_dump_descriptors(&dev, stdout);
+
+    if (audio_alt)
+        ps3eye_probe_audio_alt(&dev, stdout);
 
     if (identify) {
         ov534      cam;

@@ -75,7 +75,7 @@ Frame payload format (both sources agree):
 | 2 | AVStream virtual camera emitting a synthetic pattern | Not started (blocked by stage 0) |
 | 3 | User-mode service pushing real frames into the driver | Not started |
 | 4 | Controls + documentation | Not started |
-| A | Microphone (UAC1, 4ch/16 kHz) | **Feasibility assessed** — see `docs/AUDIO.md`, no decision yet |
+| A | Microphone (UAC1, 4ch/16 kHz) | **Assessed, blocked in the current binding** — see `docs/AUDIO.md`; needs a decision |
 
 ---
 
@@ -185,6 +185,26 @@ Acceptance criteria:
       sharpness, flip and frame rate mapped to camera properties.
 - [ ] `docs/ARCHITECTURE.md`, `BUILD.md`, `INSTALL.md`, `UNINSTALL.md`,
       `PORTING.md`.
+
+---
+
+## Stage A — Microphone (candidate, not in the original scope)
+
+Full analysis and evidence in `docs/AUDIO.md`. Summary:
+
+- The device declares a UAC1 microphone: 4 channels, 16 bit, 16 kHz,
+  `EP 0x84` isochronous (max packet 768, interval 4), 128,000 B/s.
+- Windows does not expose it today: one WinUSB device node, no `usbccgp`
+  children, no `usbaudio` binding, no audio endpoint from this camera.
+- WinUSB *can* select the audio alt setting and see the endpoint, but every
+  isochronous read fails with `ERROR_GEN_FAILURE` (31), with or without the
+  sampling-frequency request and with or without video streaming.
+- The only viable route is a rebind so `usbccgp` splits the device and
+  `usbaudio.sys` owns interfaces 1+2. That needs admin, changes the topology
+  Stage 1 depends on, and its success is not guaranteed on an IAD-less
+  configuration.
+
+Blocked on a user decision; deliberately not attempted during Stage 1.
 
 ---
 
