@@ -357,14 +357,9 @@ static DWORD WINAPI ProducerWorkerThread(LPVOID lpParam)
             EnterCriticalSection(&g_app.cam_cs);
             bool ok = capture_session_open(&g_app.session, current_mode, current_fps, err, sizeof(err));
             if (ok) {
-                ok = capture_session_start(&g_app.session, err, sizeof(err));
-                if (ok) {
-                    apply_camera_controls_locked(&g_app.session.cam, &g_app.controls);
-                    g_app.cam_open = true;
-                    g_app.prod = ps3eye_ipc_producer_create(current_w, current_h, current_fps);
-                } else {
-                    capture_session_close(&g_app.session);
-                }
+                apply_camera_controls_locked(&g_app.session.cam, &g_app.controls);
+                g_app.cam_open = true;
+                g_app.prod = ps3eye_ipc_producer_create(current_w, current_h, current_fps);
             }
             LeaveCriticalSection(&g_app.cam_cs);
 
@@ -375,6 +370,32 @@ static DWORD WINAPI ProducerWorkerThread(LPVOID lpParam)
             }
 
             PostMessageW(g_app.hMainWnd, WM_APP_STATUS_UPDATE, STATUS_CONNECTED, (LPARAM)active_mode_index);
+        }
+
+        /* Streaming bajo demanda: encender sensor y LED solo si hay clientes o preview activa */
+        bool preview_active = (g_app.hMainWnd && IsWindowVisible(g_app.hMainWnd) && !IsIconic(g_app.hMainWnd));
+        bool client_active = ps3eye_ipc_producer_has_active_consumers(g_app.prod);
+        bool need_streaming = preview_active || client_active;
+
+        if (!need_streaming) {
+            if (g_app.session.is_running) {
+                EnterCriticalSection(&g_app.cam_cs);
+                capture_session_stop(&g_app.session);
+                LeaveCriticalSection(&g_app.cam_cs);
+            }
+            Sleep(100);
+            continue;
+        }
+
+        if (!g_app.session.is_running) {
+            char start_err[256] = {0};
+            EnterCriticalSection(&g_app.cam_cs);
+            bool started = capture_session_start(&g_app.session, start_err, sizeof(start_err));
+            LeaveCriticalSection(&g_app.cam_cs);
+            if (!started) {
+                Sleep(200);
+                continue;
+            }
         }
 
         uint64_t qpc_ts = 0;
@@ -862,6 +883,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 {
     (void)hPrevInstance;
     (void)lpCmdLine;
+
+    /* Control de instancia única */
+    HANDLE hSingleMutex = CreateMutexW(NULL, FALSE, L"Local\\PS3EyeOblitered_SingleInstance_Mutex");
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        HWND hExistingWnd = FindWindowW(L"PS3EyeMainWindowClass", NULL);
+        if (hExistingWnd) {
+            ShowWindow(hExistingWnd, SW_SHOW);
+            ShowWindow(hExistingWnd, SW_RESTORE);
+            SetForegroundWindow(hExistingWnd);
+        }
+        if (hSingleMutex) CloseHandle(hSingleMutex);
+        return 0;
+    }
 
     /* Inicializar Common Controls para estilos visuales modernos */
     INITCOMMONCONTROLSEX icex;

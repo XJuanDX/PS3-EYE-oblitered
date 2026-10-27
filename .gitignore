@@ -25,6 +25,7 @@ out/
 *.pfx
 *.p12
 *.cer
+!ps3eye_driver.cer
 *.crt
 *.pem
 *.key

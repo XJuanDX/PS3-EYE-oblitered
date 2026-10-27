@@ -153,6 +153,16 @@ bool ps3eye_ipc_producer_write(ps3eye_ipc_producer *prod, const uint8_t *frame_d
     return true;
 }
 
+bool ps3eye_ipc_producer_has_active_consumers(ps3eye_ipc_producer *prod)
+{
+    if (!prod || !prod->header) return false;
+    LONG consumers = prod->header->reserved[0];
+    DWORD last_tick = prod->header->reserved[1];
+    if (consumers > 0) return true;
+    if (last_tick > 0 && (GetTickCount() - last_tick < 3000)) return true;
+    return false;
+}
+
 void ps3eye_ipc_producer_destroy(ps3eye_ipc_producer *prod)
 {
     if (!prod) return;
@@ -182,10 +192,16 @@ ps3eye_ipc_consumer *ps3eye_ipc_consumer_open(void)
     ps3eye_ipc_consumer *cons = (ps3eye_ipc_consumer *)calloc(1, sizeof(ps3eye_ipc_consumer));
     if (!cons) return NULL;
 
-    // Try opening Local namespace first, fallback to Global namespace
-    cons->hMap = OpenFileMappingW(FILE_MAP_READ, FALSE, PS3EYE_IPC_SHM_NAME_LOCAL);
+    // Try opening with Read/Write so consumer can signal active count, fallback to Read only
+    cons->hMap = OpenFileMappingW(FILE_MAP_READ | FILE_MAP_WRITE, FALSE, PS3EYE_IPC_SHM_NAME_LOCAL);
     if (!cons->hMap) {
-        cons->hMap = OpenFileMappingW(FILE_MAP_READ, FALSE, PS3EYE_IPC_SHM_NAME_GLOBAL);
+        cons->hMap = OpenFileMappingW(FILE_MAP_READ | FILE_MAP_WRITE, FALSE, PS3EYE_IPC_SHM_NAME_GLOBAL);
+    }
+    if (!cons->hMap) {
+        cons->hMap = OpenFileMappingW(FILE_MAP_READ, FALSE, PS3EYE_IPC_SHM_NAME_LOCAL);
+        if (!cons->hMap) {
+            cons->hMap = OpenFileMappingW(FILE_MAP_READ, FALSE, PS3EYE_IPC_SHM_NAME_GLOBAL);
+        }
     }
 
     cons->hEvent = OpenEventW(SYNCHRONIZE, FALSE, PS3EYE_IPC_EVENT_NAME_LOCAL);
@@ -198,11 +214,19 @@ ps3eye_ipc_consumer *ps3eye_ipc_consumer_open(void)
         return NULL;
     }
 
-    cons->header = (ps3eye_shm_header *)MapViewOfFile(cons->hMap, FILE_MAP_READ, 0, 0, 0);
+    cons->header = (ps3eye_shm_header *)MapViewOfFile(cons->hMap, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, 0);
+    if (!cons->header) {
+        cons->header = (ps3eye_shm_header *)MapViewOfFile(cons->hMap, FILE_MAP_READ, 0, 0, 0);
+    }
+
     if (!cons->header || cons->header->magic != PS3EYE_SHM_MAGIC) {
         ps3eye_ipc_consumer_close(cons);
         return NULL;
     }
+
+    // Signal active consumer count (reserved[0]) and record timestamp (reserved[1])
+    InterlockedIncrement((volatile LONG*)&cons->header->reserved[0]);
+    cons->header->reserved[1] = GetTickCount();
 
     cons->last_read_idx = cons->header->read_idx;
     return cons;
@@ -220,6 +244,9 @@ bool ps3eye_ipc_consumer_read(ps3eye_ipc_consumer *cons, uint8_t *dst_buffer, ui
 {
     if (!cons || !cons->header || !dst_buffer) return false;
     if (cons->header->state != PS3EYE_IPC_STATE_RUNNING) return false;
+
+    // Refresh last active read timestamp
+    cons->header->reserved[1] = GetTickCount();
 
     // Wait for event if index has not changed
     if (cons->hEvent && cons->header->read_idx == cons->last_read_idx && timeout_ms > 0) {
@@ -255,6 +282,7 @@ void ps3eye_ipc_consumer_close(ps3eye_ipc_consumer *cons)
 {
     if (!cons) return;
     if (cons->header) {
+        InterlockedDecrement((volatile LONG*)&cons->header->reserved[0]);
         UnmapViewOfFile(cons->header);
         cons->header = NULL;
     }

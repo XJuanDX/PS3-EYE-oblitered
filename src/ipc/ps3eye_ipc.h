@@ -57,6 +57,7 @@ typedef struct ps3eye_ipc_consumer ps3eye_ipc_consumer;
 // Producer API (called by PS3EyeApp outside sandbox)
 ps3eye_ipc_producer *ps3eye_ipc_producer_create(uint32_t width, uint32_t height, uint32_t fps);
 bool ps3eye_ipc_producer_write(ps3eye_ipc_producer *prod, const uint8_t *frame_data, uint32_t frame_bytes, uint64_t timestamp_100ns);
+bool ps3eye_ipc_producer_has_active_consumers(ps3eye_ipc_producer *prod);
 void ps3eye_ipc_producer_destroy(ps3eye_ipc_producer *prod);
 
 // Consumer API (called by ps3eye_dshow.dll inside Chrome/Edge/OBS)
