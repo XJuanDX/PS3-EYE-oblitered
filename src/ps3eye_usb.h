@@ -47,6 +47,11 @@ bool ps3eye_ctrl_in(ps3eye_dev *d, uint8_t request, uint16_t value,
  * map. Read-only: performs no vendor requests. */
 void ps3eye_dump_descriptors(ps3eye_dev *d, FILE *out);
 
+/* Report whether the UAC interfaces (1 = audio control, 2 = audio streaming)
+ * are addressable through the current WinUSB binding. Read-only: only queries
+ * handles and descriptors, never issues SET_INTERFACE or SET_CONFIGURATION. */
+void ps3eye_probe_audio(ps3eye_dev *d, FILE *out);
+
 /* ---- Pipelined overlapped bulk reader -------------------------------- */
 
 typedef struct ps3eye_reader ps3eye_reader;

@@ -286,6 +286,130 @@ static const char *speed_name(uint8_t s)
     }
 }
 
+static const char *terminal_type_name(uint16_t t)
+{
+    switch (t) {
+    case 0x0100: return "USB undefined";
+    case 0x0101: return "USB streaming";
+    case 0x0200: return "input undefined";
+    case 0x0201: return "microphone";
+    case 0x0202: return "desktop microphone";
+    case 0x0203: return "personal computer";
+    case 0x0204: return "microphone array";
+    case 0x0300: return "output undefined";
+    case 0x0301: return "speaker";
+    case 0x0302: return "headphones";
+    case 0x0600: return "external undefined";
+    case 0x0601: return "analog connector";
+    case 0x0602: return "digital audio interface";
+    case 0x0603: return "line connector";
+    case 0x0604: return "legacy audio connector";
+    case 0x0605: return "S/PDIF interface";
+    default:     return "other";
+    }
+}
+
+/* Decode the UAC1 class-specific descriptors: the only way to learn what the
+ * audio function actually offers without streaming it. */
+static void dump_uac(uint8_t *raw, uint32_t got, FILE *out)
+{
+    uint8_t  cur_class = 0, cur_sub = 0, cur_alt = 0;
+    uint32_t off = 0;
+    bool     any = false;
+
+    while (off + 2 <= got) {
+        uint8_t blen  = raw[off];
+        uint8_t btype = raw[off + 1];
+
+        if (blen < 2 || off + blen > got)
+            break;
+
+        if (btype == 0x04 && blen >= 9) {
+            cur_class = raw[off + 5];
+            cur_sub   = raw[off + 6];
+            cur_alt   = raw[off + 3];
+        } else if (btype == 0x24 && blen >= 4 &&
+                   cur_class == 0x01 && cur_sub == 0x01) {
+            uint8_t s = raw[off + 2];
+            if (!any) {
+                fprintf(out, "\n  audio control function (UAC1):\n");
+                any = true;
+            }
+            if (s == 0x01 && blen >= 9) {
+                fprintf(out, "    AC header: bcdADC 0x%02x%02x, %u streaming "
+                             "interface(s)\n",
+                        raw[off + 4], raw[off + 3], (unsigned)raw[off + 7]);
+            } else if (s == 0x02 && blen >= 12) {
+                uint16_t tt = (uint16_t)(raw[off + 4] | (raw[off + 5] << 8));
+                fprintf(out, "    INPUT_TERMINAL id %u: type 0x%04x (%s), "
+                             "%u channel(s), ch_config 0x%02x%02x\n",
+                        (unsigned)raw[off + 3], (unsigned)tt,
+                        terminal_type_name(tt), (unsigned)raw[off + 7],
+                        raw[off + 9], raw[off + 8]);
+            } else if (s == 0x03 && blen >= 9) {
+                uint16_t tt = (uint16_t)(raw[off + 4] | (raw[off + 5] << 8));
+                fprintf(out, "    OUTPUT_TERMINAL id %u: type 0x%04x (%s), "
+                             "source unit %u\n",
+                        (unsigned)raw[off + 3], (unsigned)tt,
+                        terminal_type_name(tt), (unsigned)raw[off + 7]);
+            } else if (s == 0x06 && blen >= 7) {
+                uint8_t  csize = raw[off + 5];
+                unsigned nbm   = csize ? (unsigned)(blen - 7) / csize : 0;
+                unsigned k;
+
+                fprintf(out, "    FEATURE_UNIT id %u: source %u, "
+                             "control size %u, %u bitmap(s):",
+                        (unsigned)raw[off + 3], (unsigned)raw[off + 4],
+                        (unsigned)csize, nbm);
+                for (k = 0; k < nbm; k++) {
+                    unsigned b;
+                    fprintf(out, " [%u]", k);
+                    for (b = 0; b < csize; b++)
+                        fprintf(out, "%02x", raw[off + 6 + k * csize + b]);
+                }
+                fprintf(out, "\n");
+            }
+        } else if (btype == 0x24 && blen >= 4 &&
+                   cur_class == 0x01 && cur_sub == 0x02) {
+            uint8_t s = raw[off + 2];
+            if (s == 0x01 && blen >= 7) {
+                fprintf(out, "    AS_GENERAL alt %u: terminal link %u, "
+                             "format tag 0x%02x%02x\n",
+                        (unsigned)cur_alt, (unsigned)raw[off + 3],
+                        raw[off + 6], raw[off + 5]);
+            } else if (s == 0x02 && blen >= 8) {
+                uint8_t  nch    = raw[off + 4];
+                uint8_t  sub    = raw[off + 5];
+                uint8_t  bits   = raw[off + 6];
+                uint8_t  nrates = raw[off + 7];
+                uint32_t f;
+                fprintf(out, "    AS_FORMAT_TYPE_I alt %u: %u channel(s), "
+                             "%u bytes/sample, %u bit, %u rate(s):",
+                        (unsigned)cur_alt, (unsigned)nch, (unsigned)sub,
+                        (unsigned)bits, (unsigned)nrates);
+                for (f = 0; f < nrates && (8 + (f + 1) * 3) <= blen; f++) {
+                    uint32_t hz = (uint32_t)raw[off + 8 + f * 3] |
+                                  ((uint32_t)raw[off + 9 + f * 3] << 8) |
+                                  ((uint32_t)raw[off + 10 + f * 3] << 16);
+                    fprintf(out, " %u Hz", (unsigned)hz);
+                }
+                fprintf(out, "\n");
+                if (nch && sub && nrates) {
+                    uint32_t hz = (uint32_t)raw[off + 8] |
+                                  ((uint32_t)raw[off + 9] << 8) |
+                                  ((uint32_t)raw[off + 10] << 16);
+                    fprintf(out, "      uncompressed rate: %u bytes/s\n",
+                            (unsigned)(hz * nch * sub));
+                }
+            }
+        } else if (btype == 0x25 && blen >= 5) {
+            fprintf(out, "    CS_ENDPOINT: bmAttributes 0x%02x\n",
+                    (unsigned)raw[off + 3]);
+        }
+        off += blen;
+    }
+}
+
 void ps3eye_dump_descriptors(ps3eye_dev *d, FILE *out)
 {
     USB_CONFIGURATION_DESCRIPTOR cfg;
@@ -378,7 +502,58 @@ void ps3eye_dump_descriptors(ps3eye_dev *d, FILE *out)
         off += blen;
     }
 
+    dump_uac(raw, got, out);
     free(raw);
+
+    ps3eye_probe_audio(d, out);
+}
+
+void ps3eye_probe_audio(ps3eye_dev *d, FILE *out)
+{
+    USB_INTERFACE_DESCRIPTOR ifd;
+    unsigned                 idx;
+
+    fprintf(out, "\n  audio reachability through this WinUSB handle:\n");
+
+    memset(&ifd, 0, sizeof(ifd));
+    if (WinUsb_QueryInterfaceSettings(d->iface, 0, &ifd)) {
+        fprintf(out, "    bound interface      : %u (class %02x/%02x/%02x)\n",
+                (unsigned)ifd.bInterfaceNumber, (unsigned)ifd.bInterfaceClass,
+                (unsigned)ifd.bInterfaceSubClass,
+                (unsigned)ifd.bInterfaceProtocol);
+    }
+
+    /* Without an IAD, WinUSB is not expected to hand out the other
+     * interfaces; the exact error code is the evidence we want. */
+    for (idx = 1; idx <= 2; idx++) {
+        WINUSB_INTERFACE_HANDLE a = NULL;
+        DWORD                   err;
+
+        SetLastError(0);
+        if (!WinUsb_GetAssociatedInterface(d->iface, (UCHAR)idx, &a)) {
+            err = GetLastError();
+            fprintf(out, "    associated iface %u    : unavailable "
+                         "(WinUsb_GetAssociatedInterface error %lu)\n",
+                    idx, (unsigned long)err);
+            continue;
+        }
+
+        memset(&ifd, 0, sizeof(ifd));
+        if (WinUsb_QueryInterfaceSettings(a, 0, &ifd)) {
+            fprintf(out, "    associated iface %u    : ok, bInterfaceNumber %u, "
+                         "class %02x/%02x/%02x, %u endpoint(s) at alt 0\n",
+                    idx, (unsigned)ifd.bInterfaceNumber,
+                    (unsigned)ifd.bInterfaceClass,
+                    (unsigned)ifd.bInterfaceSubClass,
+                    (unsigned)ifd.bInterfaceProtocol,
+                    (unsigned)ifd.bNumEndpoints);
+        } else {
+            fprintf(out, "    associated iface %u    : handle ok, "
+                         "WinUsb_QueryInterfaceSettings failed (%lu)\n",
+                    idx, (unsigned long)GetLastError());
+        }
+        WinUsb_Free(a);
+    }
 }
 
 /* ------------------------------------------------------------------ */

@@ -71,10 +71,11 @@ Frame payload format (both sources agree):
 | Stage | Scope | Status |
 |---|---|---|
 | 0 | WDK install, Secure Boot off, test signing on | **BLOCKED — needs user action** (`docs/STAGE0-PREREQUISITES.md`) |
-| 1 | Capture core + CLI frame grabber (no kernel, no admin) | **IN PROGRESS** |
+| 1 | Capture core + CLI frame grabber (no kernel, no admin) | **DONE** — all criteria met, see results below |
 | 2 | AVStream virtual camera emitting a synthetic pattern | Not started (blocked by stage 0) |
 | 3 | User-mode service pushing real frames into the driver | Not started |
 | 4 | Controls + documentation | Not started |
+| A | Microphone (UAC1, 4ch/16 kHz) | **Feasibility assessed** — see `docs/AUDIO.md`, no decision yet |
 
 ---
 
@@ -113,16 +114,34 @@ it proves the sensor bring-up and the USB stream end to end.
 
 ### Acceptance criteria
 
-- [ ] `ps3eye-probe` reports `Sensor ID 0x7720` (or 0x7721/0x7722/0x7723) and
+- [x] `ps3eye-probe` reports `Sensor ID 0x7720` (or 0x7721/0x7722/0x7723) and
       shows a bulk IN pipe on interface 0.
-- [ ] `ps3eye-grab --frames 30 --out out/` exits 0.
-- [ ] 30 PPM files exist, each 921600 bytes of RGB after a 614400-byte YUY2
+- [x] `ps3eye-grab --frames 30 --out out/` exits 0.
+- [x] 30 PPM files exist, each 921600 bytes of RGB after a 614400-byte YUY2
       frame, and are visually non-black, non-garbage.
-- [ ] Reported frame rate ≥ 25 fps at 640x480 within the measured window.
-- [ ] `frames_ok / (frames_ok + frames_dropped) ≥ 0.9` over a 300-frame run.
-- [ ] Second consecutive run succeeds without replugging the camera
+- [x] Reported frame rate ≥ 25 fps at 640x480 within the measured window.
+- [x] `frames_ok / (frames_ok + frames_dropped) ≥ 0.9` over a 300-frame run.
+- [x] Second consecutive run succeeds without replugging the camera
       (proves `0xe0=0x09` stop path releases the device cleanly).
-- [ ] 320x240 mode also produces valid frames (`--size 320x240`).
+- [x] 320x240 mode also produces valid frames (`--size 320x240`).
+
+### Observed results (local unit, `USB\VID_1415&PID_2000`)
+
+Sensor: `0x7721` (OV7720/OV7725 family), 0 USB/SCCB errors, init 1.89–2.27 s
+(the init cost is `sccb_check_status`'s 10 ms status poll, inherent to the
+Linux port, not a defect).
+
+| Run | Result |
+|---|---|
+| Acceptance `--frames 30 --out out` | 30 written, 35 reassembled, **0 dropped**, 30.01 fps, 17.30 MB/s, all error counters 0 |
+| Soak `--frames 300` | 300 written, 305 reassembled, **0 dropped**, 30.01 fps, 29.92 fps stream, 17.64 MB/s over 10.19 s |
+| Immediate re-open, 30 frames | succeeded, 0 errors (clean `0xe0=0x09` stop) |
+| QVGA `--size 320x240`, 20 frames | 20 written, 29.97 fps, 0 errors |
+| Output files | 30 × PPM of 921,615 bytes = 15-byte header + 921,600 RGB; mean RGB 105.9/102.4/82.1, full 0..255 range; frame content visually confirmed |
+
+Frame model verified exactly against the driver's accounting:
+35 frames × 618,024 bytes (302 chunks × 2048, each carrying 2036 payload bytes)
+= 21,630,840 bytes, which is the byte count the run reported.
 
 ### Known risks
 
@@ -132,8 +151,9 @@ it proves the sensor bring-up and the USB stream end to end.
   yet; the Bayer (`SGRBG8`) path used by `PS3EYEDriver` is the documented
   fallback if YUY2 fails twice.
 - WinUSB is bound to the composite device node (no `usbccgp` children were
-  enumerated), so only interface 0 is reachable through a single handle. That
-  is exactly the interface we need.
+  enumerated). Interface 0 is what the handle is bound to; the UAC streaming
+  interface 2 is *also* reachable through the same handle via
+  `WinUsb_GetAssociatedInterface` — measured, see `docs/AUDIO.md`.
 
 ---
 
