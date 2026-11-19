@@ -714,12 +714,16 @@ void PS3EyePin::DoBufferProcessingLoop()
 
         // 1. Try IPC Consumer first (Virtual Camera mode from PS3EyeApp)
         ps3eye_ipc_consumer *ipc = m_pFilter->GetIpcConsumer();
-        if (!ipc) {
+        if (!ipc || !ps3eye_ipc_consumer_is_alive(ipc)) {
             m_pFilter->EnsureSessionOpen();
             ipc = m_pFilter->GetIpcConsumer();
         }
 
         if (ipc && ps3eye_ipc_consumer_is_alive(ipc)) {
+            if (session && session->is_running) {
+                capture_session_stop(session);
+                capture_session_close(session);
+            }
             uint32_t w = 0, h = 0;
             uint64_t ts = 0;
             if (ps3eye_ipc_consumer_read(ipc, pDst, (uint32_t)cbSize, &w, &h, &ts, 35)) {
@@ -810,10 +814,24 @@ void PS3EyeFilter::SetConfiguredMode(ps3eye_mode mode, uint16_t fps)
 
 HRESULT PS3EyeFilter::EnsureSessionOpen()
 {
+    EnterCriticalSection(&m_csFilter);
+
+    if (m_pIpcConsumer != nullptr && !ps3eye_ipc_consumer_is_alive(m_pIpcConsumer)) {
+        ps3eye_ipc_consumer_close(m_pIpcConsumer);
+        m_pIpcConsumer = nullptr;
+    }
+
     if (!m_pIpcConsumer) {
         m_pIpcConsumer = ps3eye_ipc_consumer_open();
     }
+
     if (m_pIpcConsumer && ps3eye_ipc_consumer_is_alive(m_pIpcConsumer)) {
+        if (m_session.is_running || m_bSessionOpened) {
+            capture_session_stop(&m_session);
+            capture_session_close(&m_session);
+            m_bSessionOpened = false;
+        }
+        LeaveCriticalSection(&m_csFilter);
         return S_OK;
     }
 
@@ -821,8 +839,13 @@ HRESULT PS3EyeFilter::EnsureSessionOpen()
         char err[256];
         if (capture_session_open(&m_session, m_configuredMode, m_configuredFps, err, sizeof(err))) {
             m_bSessionOpened = true;
+            if (m_state == State_Running || m_state == State_Paused) {
+                capture_session_start(&m_session, err, sizeof(err));
+            }
         }
     }
+
+    LeaveCriticalSection(&m_csFilter);
     return S_OK;
 }
 

@@ -1,4 +1,4 @@
-# build.ps1 — builds ps3eye-probe.exe and ps3eye-grab.exe with MSVC 2019.
+﻿# build.ps1 — builds ps3eye-probe.exe and ps3eye-grab.exe with MSVC 2019.
 #
 # No CMake, no Ninja: the toolchain here is VS 2019 Build Tools 16.11 with the
 # Windows 10 SDK 19041 only. vcvars64.bat is sourced into this process so cl.exe
@@ -17,6 +17,7 @@ $ErrorActionPreference = 'Stop'
 
 $root   = $PSScriptRoot
 $build  = Join-Path $root 'build'
+$bin    = Join-Path $root 'bin'
 $vcvars = 'C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
 
 if (-not (Test-Path -LiteralPath $vcvars)) {
@@ -29,7 +30,7 @@ if ($Clean -and (Test-Path -LiteralPath $build)) {
     }
 }
 
-foreach ($d in @($build, (Join-Path $build 'probe'), (Join-Path $build 'grab'), (Join-Path $build 'audio'), (Join-Path $build 'tests'), (Join-Path $build 'dshow'), (Join-Path $build 'app'))) {
+foreach ($d in @($build, $bin, (Join-Path $build 'probe'), (Join-Path $build 'grab'), (Join-Path $build 'audio'), (Join-Path $build 'tests'), (Join-Path $build 'dshow'), (Join-Path $build 'app'))) {
     New-Item -ItemType Directory -Force -Path $d | Out-Null
 }
 
@@ -63,6 +64,7 @@ $cflags = @(
     '/nologo',
     '/W4',
     '/O2',
+    '/MT',
     '/std:c11',
     '/D_CRT_SECURE_NO_WARNINGS',
     '/wd5105',
@@ -106,6 +108,7 @@ function Build-DShowDll {
         '/nologo',
         '/W4',
         '/O2',
+        '/MT',
         '/std:c++17',
         '/EHsc',
         '/LD',
@@ -139,6 +142,10 @@ function Build-DShowDll {
     if ($LASTEXITCODE -ne 0) {
         throw "compilation failed for ps3eye_dshow.dll (exit $LASTEXITCODE)"
     }
+
+    $binDll = Join-Path $bin 'ps3eye_dshow.dll'
+    Write-Host "copying $out to $binDll"
+    Copy-Item -Path $out -Destination $binDll -Force
 }
 
 function Build-App {
@@ -157,6 +164,7 @@ function Build-App {
         '/nologo',
         '/W4',
         '/O2',
+        '/MT',
         '/std:c11',
         '/D_CRT_SECURE_NO_WARNINGS',
         '/wd5105',
@@ -186,6 +194,9 @@ function Build-App {
         throw "compilation failed for PS3EYEOblitered.exe (exit $LASTEXITCODE)"
     }
     Copy-Item -Path $out -Destination "build\PS3EyeApp.exe" -Force
+    $binApp = Join-Path $bin 'PS3EYEOblitered.exe'
+    Write-Host "copying $out to $binApp"
+    Copy-Item -Path $out -Destination $binApp -Force
 }
 
 Push-Location $root
@@ -199,7 +210,7 @@ try {
 
     # DShow Tests
     $testObj = "build\tests\"
-    $testFlags = @('/nologo', '/W4', '/O2', '/std:c++17', '/EHsc', '/D_CRT_SECURE_NO_WARNINGS', '/wd5105', '/I', 'src', '/I', 'src\dshow', "/Fo$testObj")
+    $testFlags = @('/nologo', '/W4', '/O2', '/MT', '/std:c++17', '/EHsc', '/D_CRT_SECURE_NO_WARNINGS', '/wd5105', '/I', 'src', '/I', 'src\dshow', "/Fo$testObj")
     $testLibs = @('ole32.lib', 'oleaut32.lib', 'strmiids.lib')
 
     $filterTestOut = "build\test_dshow_filter.exe"
@@ -239,20 +250,26 @@ try {
 
     $ipcTestOut = "build\test_ipc.exe"
     Write-Host "building $ipcTestOut"
-    & cl.exe /nologo /W4 /O2 /std:c11 /D_CRT_SECURE_NO_WARNINGS /wd5105 /I src /I src\ipc "/Fobuild\tests\" tests\test_ipc.c src\ipc\ps3eye_ipc.c advapi32.lib "/Fe$ipcTestOut"
+    & cl.exe /nologo /W4 /O2 /MT /std:c11 /D_CRT_SECURE_NO_WARNINGS /wd5105 /I src /I src\ipc "/Fobuild\tests\" tests\test_ipc.c src\ipc\ps3eye_ipc.c advapi32.lib "/Fe$ipcTestOut"
     if ($LASTEXITCODE -ne 0) {
         throw "compilation failed for test_ipc.exe (exit $LASTEXITCODE)"
     }
 
     $liveStreamTestOut = "build\test_live_stream.exe"
     Write-Host "building $liveStreamTestOut"
-    & cl.exe /nologo /W4 /O2 /std:c11 /D_CRT_SECURE_NO_WARNINGS /wd5105 /I src /I src\ipc "/Fobuild\tests\" tests\test_live_stream.c src\ipc\ps3eye_ipc.c advapi32.lib "/Fe$liveStreamTestOut"
+    & cl.exe /nologo /W4 /O2 /MT /std:c11 /D_CRT_SECURE_NO_WARNINGS /wd5105 /I src /I src\ipc "/Fobuild\tests\" tests\test_live_stream.c src\ipc\ps3eye_ipc.c advapi32.lib "/Fe$liveStreamTestOut"
     if ($LASTEXITCODE -ne 0) {
         throw "compilation failed for test_live_stream.exe (exit $LASTEXITCODE)"
     }
 
     Write-Host ''
-    Write-Host 'artifacts:'
+    Write-Host 'distribution artifacts (bin\):'
+    Get-ChildItem -LiteralPath $bin -Filter *.* | Where-Object { $_.Extension -in '.exe', '.dll' } | ForEach-Object {
+        Write-Host ("  {0}  ({1:N0} bytes)" -f $_.FullName, $_.Length)
+    }
+
+    Write-Host ''
+    Write-Host 'artifacts (build\):'
     Get-ChildItem -LiteralPath $build -Filter *.* | Where-Object { $_.Extension -in '.exe', '.dll' } | ForEach-Object {
         Write-Host ("  {0}  ({1:N0} bytes)" -f $_.FullName, $_.Length)
     }

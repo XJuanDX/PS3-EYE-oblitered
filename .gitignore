@@ -2,18 +2,22 @@
 build/
 *.obj
 *.exe
+!bin/PS3EYEOblitered.exe
 *.pdb
 *.ilk
 *.lib
 *.exp
 *.dll
+!bin/ps3eye_dshow.dll
 
 # Driver build output
 *.sys
 *.cat
 !usb_device.cat
+!drivers/ps3eye_video.cat
 *.inf
 !usb_device_video_only.inf
+!drivers/ps3eye_video.inf
 
 # Captured frames / test artifacts
 out/

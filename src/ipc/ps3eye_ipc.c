@@ -84,9 +84,9 @@ ps3eye_ipc_producer *ps3eye_ipc_producer_create(uint32_t width, uint32_t height,
         prod->hMap = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, total_size, PS3EYE_IPC_SHM_NAME_LOCAL);
     }
 
-    prod->hEvent = CreateEventW(pSA, FALSE, FALSE, PS3EYE_IPC_EVENT_NAME_LOCAL);
+    prod->hEvent = CreateEventW(pSA, TRUE, FALSE, PS3EYE_IPC_EVENT_NAME_LOCAL);
     if (!prod->hEvent) {
-        prod->hEvent = CreateEventW(NULL, FALSE, FALSE, PS3EYE_IPC_EVENT_NAME_LOCAL);
+        prod->hEvent = CreateEventW(NULL, TRUE, FALSE, PS3EYE_IPC_EVENT_NAME_LOCAL);
     }
 
     if (pSD) LocalFree(pSD);
@@ -145,9 +145,10 @@ bool ps3eye_ipc_producer_write(ps3eye_ipc_producer *prod, const uint8_t *frame_d
     prod->header->write_idx = next_idx;
     prod->header->read_idx = next_idx;
 
-    // Signal listeners that a new frame is ready
+    // Signal listeners that a new frame is ready (broadcast to all waiting consumers)
     if (prod->hEvent) {
         SetEvent(prod->hEvent);
+        ResetEvent(prod->hEvent);
     }
 
     return true;
