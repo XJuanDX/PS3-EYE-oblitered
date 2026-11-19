@@ -70,11 +70,11 @@ Frame payload format (both sources agree):
 
 | Stage | Scope | Status |
 |---|---|---|
-| 0 | WDK install, Secure Boot off, test signing on | **BLOCKED — needs user action** (`docs/STAGE0-PREREQUISITES.md`) |
+| 0 | Kernel driver (WDK / Secure Boot off) | **BYPASSED / UNNECESSARY** — Full functionality achieved in user-mode with Secure Boot ON |
 | 1 | Capture core + CLI frame grabber (no kernel, no admin) | **DONE** — all criteria met, see results below |
 | 2 | DirectShow user-mode camera filter (ps3eye_dshow.dll) | **DONE** — COM inproc server registered in VideoInputDeviceCategory, verified in DirectShow |
-| 3 | User-mode service pushing real frames into the driver | Not started |
-| 4 | Controls + documentation | Not started |
+| 3 | User-mode service / producer pushing real frames into DShow | **DONE** — PS3EYEOblitered lock-free IPC producer + DirectShow consumer with broadcast multi-client |
+| 4 | Controls, GUI and Distribution package | **DONE** — Native Win32 control GUI, static /MT distribution binaries, signed catalog and dynamic installer |
 | A | Microphone (UAC1, 4ch/16 kHz) | **DONE** — composite split (usbccgp) active, usbaudio.sys bound to MI_01, WinUSB on MI_00, video + mic verified |
 
 ---
