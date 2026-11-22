@@ -35,6 +35,7 @@ struct ps3eye_ipc_consumer {
     HANDLE              hEvent;
     ps3eye_shm_header  *header;
     uint32_t            last_read_idx;
+    bool                can_write;
 };
 
 static SECURITY_ATTRIBUTES *CreateIpcSecurityAttributes(PSECURITY_DESCRIPTOR *outSD)
@@ -215,8 +216,11 @@ ps3eye_ipc_consumer *ps3eye_ipc_consumer_open(void)
     }
 
     cons->header = (ps3eye_shm_header *)MapViewOfFile(cons->hMap, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, 0);
-    if (!cons->header) {
+    if (cons->header) {
+        cons->can_write = true;
+    } else {
         cons->header = (ps3eye_shm_header *)MapViewOfFile(cons->hMap, FILE_MAP_READ, 0, 0, 0);
+        cons->can_write = false;
     }
 
     if (!cons->header || cons->header->magic != PS3EYE_SHM_MAGIC) {
@@ -225,8 +229,10 @@ ps3eye_ipc_consumer *ps3eye_ipc_consumer_open(void)
     }
 
     // Signal active consumer count (reserved[0]) and record timestamp (reserved[1])
-    InterlockedIncrement((volatile LONG*)&cons->header->reserved[0]);
-    cons->header->reserved[1] = GetTickCount();
+    if (cons->can_write) {
+        InterlockedIncrement((volatile LONG*)&cons->header->reserved[0]);
+        cons->header->reserved[1] = GetTickCount();
+    }
 
     cons->last_read_idx = cons->header->read_idx;
     return cons;
@@ -246,7 +252,9 @@ bool ps3eye_ipc_consumer_read(ps3eye_ipc_consumer *cons, uint8_t *dst_buffer, ui
     if (cons->header->state != PS3EYE_IPC_STATE_RUNNING) return false;
 
     // Refresh last active read timestamp
-    cons->header->reserved[1] = GetTickCount();
+    if (cons->can_write) {
+        cons->header->reserved[1] = GetTickCount();
+    }
 
     // Wait for event if index has not changed
     if (cons->hEvent && cons->header->read_idx == cons->last_read_idx && timeout_ms > 0) {
@@ -282,7 +290,9 @@ void ps3eye_ipc_consumer_close(ps3eye_ipc_consumer *cons)
 {
     if (!cons) return;
     if (cons->header) {
-        InterlockedDecrement((volatile LONG*)&cons->header->reserved[0]);
+        if (cons->can_write) {
+            InterlockedDecrement((volatile LONG*)&cons->header->reserved[0]);
+        }
         UnmapViewOfFile(cons->header);
         cons->header = NULL;
     }
