@@ -37,6 +37,40 @@ $legacyFriendlyName = "PS3 Eye Universal"
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
+# Si somos administrador, instalar binarios en C:\Program Files\PS3 Eye Obliterated
+# Esto garantiza permisos de lectura/ejecucion para navegadores (Chrome/Edge AppContainer)
+# y evita que la camara se rompa si el usuario mueve o borra la carpeta de descarga.
+$installedAppPath = $null
+if ($isAdmin) {
+    $installDir = Join-Path $env:ProgramFiles "PS3 Eye Obliterated"
+    New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+
+    $targetDll = Join-Path $installDir "ps3eye_dshow.dll"
+    if (Test-Path $targetDll) {
+        $bakDll = "$targetDll.old"
+        Remove-Item -Path $bakDll -Force -ErrorAction SilentlyContinue
+        Rename-Item -Path $targetDll -NewName ([System.IO.Path]::GetFileName($bakDll)) -Force -ErrorAction SilentlyContinue
+    }
+    Copy-Item -Path $dllPath -Destination $targetDll -Force
+    $dllPath = $targetDll
+
+    $appSourceCandidates = @(
+        (Join-Path $PSScriptRoot "bin\PS3EYEOblitered.exe"),
+        (Join-Path $PSScriptRoot "build\PS3EYEOblitered.exe"),
+        (Join-Path $PSScriptRoot "PS3EYEOblitered.exe")
+    )
+    foreach ($srcApp in $appSourceCandidates) {
+        if (Test-Path $srcApp) {
+            Stop-Process -Name "PS3EYEOblitered", "PS3EyeApp" -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 300
+            $targetApp = Join-Path $installDir "PS3EYEOblitered.exe"
+            Copy-Item -Path $srcApp -Destination $targetApp -Force
+            $installedAppPath = $targetApp
+            break
+        }
+    }
+}
+
 $filterData = $null
 
 if ($isAdmin) {
@@ -104,46 +138,56 @@ if ($isAdmin -and $filterData) {
     Set-ItemProperty -Path "HKLM:\Software\Classes\CLSID\$category\Instance\$legacyClsid" -Name "FilterData" -Value $filterData
 }
 
-# Siempre registramos tambien en HKCU para asegurar disponibilidad inmediata en cualquier contexto de usuario
-New-Item -Path "HKCU:\Software\Classes\CLSID\$clsid" -Value $friendlyName -Force | Out-Null
-New-Item -Path "HKCU:\Software\Classes\CLSID\$clsid\InprocServer32" -Value $dllPath -Force | Out-Null
-Set-ItemProperty -Path "HKCU:\Software\Classes\CLSID\$clsid\InprocServer32" -Name "ThreadingModel" -Value "Both"
+# Si somos admin, limpiar entradas duplicadas en HKCU para que la camara no aparezca 2 veces.
+# Si no somos admin, registrar en HKCU.
+if ($isAdmin) {
+    Remove-Item -Path "HKCU:\Software\Classes\CLSID\$clsid" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "HKCU:\Software\Classes\CLSID\$legacyClsid" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$clsid" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$legacyClsid" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$friendlyName" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "HKCU:\Software\Classes\CLSID\$category\Instance\PS3 Eye Camera" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "HKLM:\Software\Classes\CLSID\$category\Instance\PS3 Eye Camera" -Recurse -Force -ErrorAction SilentlyContinue
+} else {
+    New-Item -Path "HKCU:\Software\Classes\CLSID\$clsid" -Value $friendlyName -Force | Out-Null
+    New-Item -Path "HKCU:\Software\Classes\CLSID\$clsid\InprocServer32" -Value $dllPath -Force | Out-Null
+    Set-ItemProperty -Path "HKCU:\Software\Classes\CLSID\$clsid\InprocServer32" -Name "ThreadingModel" -Value "Both"
 
-New-Item -Path "HKCU:\Software\Classes\CLSID\$legacyClsid" -Value $legacyFriendlyName -Force | Out-Null
-New-Item -Path "HKCU:\Software\Classes\CLSID\$legacyClsid\InprocServer32" -Value $dllPath -Force | Out-Null
-Set-ItemProperty -Path "HKCU:\Software\Classes\CLSID\$legacyClsid\InprocServer32" -Name "ThreadingModel" -Value "Both"
+    New-Item -Path "HKCU:\Software\Classes\CLSID\$legacyClsid" -Value $legacyFriendlyName -Force | Out-Null
+    New-Item -Path "HKCU:\Software\Classes\CLSID\$legacyClsid\InprocServer32" -Value $dllPath -Force | Out-Null
+    Set-ItemProperty -Path "HKCU:\Software\Classes\CLSID\$legacyClsid\InprocServer32" -Name "ThreadingModel" -Value "Both"
 
-New-Item -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$clsid" -Force | Out-Null
-Set-ItemProperty -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$clsid" -Name "FriendlyName" -Value $friendlyName
-Set-ItemProperty -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$clsid" -Name "CLSID" -Value $clsid
+    New-Item -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$clsid" -Force | Out-Null
+    Set-ItemProperty -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$clsid" -Name "FriendlyName" -Value $friendlyName
+    Set-ItemProperty -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$clsid" -Name "CLSID" -Value $clsid
 
-# Alias de compatibilidad en HKCU
-New-Item -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$legacyClsid" -Force | Out-Null
-Set-ItemProperty -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$legacyClsid" -Name "FriendlyName" -Value $legacyFriendlyName
-Set-ItemProperty -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$legacyClsid" -Name "CLSID" -Value $clsid
+    New-Item -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$legacyClsid" -Force | Out-Null
+    Set-ItemProperty -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$legacyClsid" -Name "FriendlyName" -Value $legacyFriendlyName
+    Set-ItemProperty -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$legacyClsid" -Name "CLSID" -Value $clsid
 
-# Replicar FilterData en HKCU
-if ($filterData) {
-    Set-ItemProperty -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$clsid" -Name "FilterData" -Value $filterData
-    Set-ItemProperty -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$legacyClsid" -Name "FilterData" -Value $filterData
+    if ($filterData) {
+        Set-ItemProperty -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$clsid" -Name "FilterData" -Value $filterData
+        Set-ItemProperty -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$legacyClsid" -Name "FilterData" -Value $filterData
+    }
+    Remove-Item -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$friendlyName" -Recurse -Force -ErrorAction SilentlyContinue
 }
-Remove-Item -Path "HKCU:\Software\Classes\CLSID\$category\Instance\$friendlyName" -Recurse -Force -ErrorAction SilentlyContinue
 
 # Busqueda resiliente de la aplicacion PS3EYEOblitered.exe / PS3EyeApp.exe
-$appCandidates = @(
-    (Join-Path $PSScriptRoot "bin\PS3EYEOblitered.exe"),
-    (Join-Path $PSScriptRoot "build\PS3EYEOblitered.exe"),
-    (Join-Path $PSScriptRoot "PS3EYEOblitered.exe"),
-    (Join-Path $PSScriptRoot "bin\PS3EyeApp.exe"),
-    (Join-Path $PSScriptRoot "build\PS3EyeApp.exe"),
-    (Join-Path $PSScriptRoot "PS3EyeApp.exe")
-)
-
-$appPath = $null
-foreach ($cand in $appCandidates) {
-    if (Test-Path $cand) {
-        $appPath = (Resolve-Path $cand).Path
-        break
+$appPath = $installedAppPath
+if (-not $appPath) {
+    $appCandidates = @(
+        (Join-Path $PSScriptRoot "bin\PS3EYEOblitered.exe"),
+        (Join-Path $PSScriptRoot "build\PS3EYEOblitered.exe"),
+        (Join-Path $PSScriptRoot "PS3EYEOblitered.exe"),
+        (Join-Path $PSScriptRoot "bin\PS3EyeApp.exe"),
+        (Join-Path $PSScriptRoot "build\PS3EyeApp.exe"),
+        (Join-Path $PSScriptRoot "PS3EyeApp.exe")
+    )
+    foreach ($cand in $appCandidates) {
+        if (Test-Path $cand) {
+            $appPath = (Resolve-Path $cand).Path
+            break
+        }
     }
 }
 
