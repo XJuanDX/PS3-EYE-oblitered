@@ -300,7 +300,7 @@ STDMETHODIMP PS3EyePin::Connect(IPin *pReceivePin, const AM_MEDIA_TYPE *pmt)
 
     HRESULT hr = VFW_E_NO_ACCEPTABLE_TYPES;
 
-    if (pmt) {
+    if (pmt && pmt->majortype != GUID_NULL && pmt->subtype != GUID_NULL && pmt->formattype != GUID_NULL && pmt->pbFormat != nullptr) {
         if (QueryAccept(pmt) != S_OK) {
             LeaveCriticalSection(&m_csPin);
             return VFW_E_TYPE_NOT_ACCEPTED;
@@ -311,20 +311,30 @@ STDMETHODIMP PS3EyePin::Connect(IPin *pReceivePin, const AM_MEDIA_TYPE *pmt)
             CopyMediaType(&m_mtCurrent, pmt);
         }
     } else {
-        // Negotiate: try our proposed types in order
-        for (int i = 0; i < 3; i++) {
-            AM_MEDIA_TYPE mt;
-            if (SUCCEEDED(CreateMediaTypeForIndex(i, &mt))) {
-                if (pReceivePin->QueryAccept(&mt) == S_OK) {
-                    hr = pReceivePin->ReceiveConnection(this, &mt);
-                    if (SUCCEEDED(hr)) {
-                        FreeMediaType(&m_mtCurrent);
-                        CopyMediaType(&m_mtCurrent, &mt);
-                        FreeMediaType(&mt);
-                        break;
+        // Negotiate: try current configured format first (set via IAMStreamConfig::SetFormat)
+        if (m_mtCurrent.pbFormat && pReceivePin->QueryAccept(&m_mtCurrent) == S_OK) {
+            hr = pReceivePin->ReceiveConnection(this, &m_mtCurrent);
+        }
+        if (FAILED(hr) && m_mtCurrent.pbFormat) {
+            hr = pReceivePin->ReceiveConnection(this, &m_mtCurrent);
+        }
+
+        // Fallback: try our proposed types in order
+        if (FAILED(hr)) {
+            for (int i = 0; i < 3; i++) {
+                AM_MEDIA_TYPE mt;
+                if (SUCCEEDED(CreateMediaTypeForIndex(i, &mt))) {
+                    if (pReceivePin->QueryAccept(&mt) == S_OK) {
+                        hr = pReceivePin->ReceiveConnection(this, &mt);
+                        if (SUCCEEDED(hr)) {
+                            FreeMediaType(&m_mtCurrent);
+                            CopyMediaType(&m_mtCurrent, &mt);
+                            FreeMediaType(&mt);
+                            break;
+                        }
                     }
+                    FreeMediaType(&mt);
                 }
-                FreeMediaType(&mt);
             }
         }
 
@@ -937,8 +947,9 @@ STDMETHODIMP PS3EyeFilter::GetState(DWORD, FILTER_STATE *State)
     if (!State) return E_POINTER;
     EnterCriticalSection(&m_csFilter);
     *State = m_state;
+    HRESULT hr = (m_state == State_Paused) ? VFW_S_CANT_CUE : S_OK;
     LeaveCriticalSection(&m_csFilter);
-    return S_OK;
+    return hr;
 }
 
 STDMETHODIMP PS3EyeFilter::SetSyncSource(IReferenceClock *pClock)
