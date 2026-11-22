@@ -744,6 +744,31 @@ static LRESULT CALLBACK MainWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
             WORD code = HIWORD(wParam);
 
             if (code == BN_CLICKED) {
+                if (id == IDC_BTN_MINIMIZE) {
+                    ShowWindow(hWnd, SW_HIDE);
+                    return 0;
+                }
+                if (id == IDC_BTN_EXIT || id == ID_TRAY_EXIT) {
+                    DestroyWindow(hWnd);
+                    return 0;
+                }
+                if (id == ID_TRAY_OPEN) {
+                    ShowWindow(hWnd, SW_RESTORE);
+                    SetForegroundWindow(hWnd);
+                    return 0;
+                }
+                if (id == ID_TRAY_AUTOSTART) {
+                    bool nextState = !IsAutoStartEnabled();
+                    SetAutoStartEnabled(nextState);
+                    CheckDlgButton(hWnd, IDC_CHK_AUTOSTART, nextState ? BST_CHECKED : BST_UNCHECKED);
+                    return 0;
+                }
+                if (id == IDC_CHK_AUTOSTART) {
+                    bool checked = (IsDlgButtonChecked(hWnd, id) == BST_CHECKED);
+                    SetAutoStartEnabled(checked);
+                    return 0;
+                }
+
                 bool checked = (IsDlgButtonChecked(hWnd, id) == BST_CHECKED);
                 EnterCriticalSection(&g_app.cam_cs);
                 switch (id) {
@@ -790,15 +815,6 @@ static LRESULT CALLBACK MainWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
                         if (g_app.cam_open) {
                             ov534_set_light_freq(&g_app.session.cam, g_app.controls.light_freq);
                         }
-                        break;
-                    case IDC_CHK_AUTOSTART:
-                        SetAutoStartEnabled(checked);
-                        break;
-                    case IDC_BTN_MINIMIZE:
-                        ShowWindow(hWnd, SW_HIDE);
-                        break;
-                    case IDC_BTN_EXIT:
-                        DestroyWindow(hWnd);
                         break;
                 }
                 LeaveCriticalSection(&g_app.cam_cs);
