@@ -109,7 +109,7 @@ STDAPI DllRegisterServer()
 
     const wchar_t *szClsid = L"{E85B697D-4F12-4C67-B029-7928C3D82490}";
     const wchar_t *szCategory = L"{860BB310-5D01-11d0-BD3B-00A0C911CE86}";
-    const wchar_t *szName = L"PS3 Eye Camera";
+    const wchar_t *szName = L"PS3 Eye Obliterated Virtual Camera";
 
     HKEY roots[] = { HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, HKEY_CLASSES_ROOT };
     for (HKEY root : roots) {
@@ -165,7 +165,7 @@ STDAPI DllUnregisterServer()
 {
     const wchar_t *szClsid = L"{E85B697D-4F12-4C67-B029-7928C3D82490}";
     const wchar_t *szCategory = L"{860BB310-5D01-11d0-BD3B-00A0C911CE86}";
-    const wchar_t *szName = L"PS3 Eye Camera";
+    const wchar_t *szName = L"PS3 Eye Obliterated Virtual Camera";
 
     // 1. Unregister via IFilterMapper2
     HRESULT hrCo = CoInitialize(NULL);

@@ -784,7 +784,7 @@ PS3EyeFilter::PS3EyeFilter()
     , m_configuredFps(30)
 {
     InitializeCriticalSection(&m_csFilter);
-    wcscpy_s(m_wszName, L"PS3 Eye Camera");
+    wcscpy_s(m_wszName, L"PS3 Eye Obliterated Virtual Camera");
     m_pPin = new PS3EyePin(this);
     InterlockedIncrement(&g_cLock);
 }

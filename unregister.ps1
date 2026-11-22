@@ -18,7 +18,7 @@ foreach ($path in $candidatePaths) {
 $clsid = "{E85B697D-4F12-4C67-B029-7928C3D82490}"
 $legacyClsid = "{B19A293E-B4A1-4B52-87B6-8B2E098D7123}"
 $category = "{860BB310-5D01-11d0-BD3B-00A0C911CE86}"
-$friendlyName = "PS3 Eye Camera"
+$friendlyName = "PS3 Eye Obliterated Virtual Camera"
 $legacyFriendlyName = "PS3 Eye Universal"
 
 Write-Host "Deteniendo procesos activos (PS3EYEOblitered, PS3EyeApp)..." -ForegroundColor Cyan

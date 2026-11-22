@@ -41,7 +41,7 @@ Abre tu programa favorito y selecciona los dispositivos correspondientes en sus 
 
 | Ajuste | Nombre que debes seleccionar |
 |---|---|
-| **Cámara / Video** | **PS3 Eye Camera** *(o PS3 Eye Universal)* |
+| **Cámara / Video** | **PS3 Eye Obliterated Virtual Camera** *(o PS3 Eye Universal)* |
 | **Micrófono / Audio** | **Micrófono (USB Camera-B4.09.24.1)** |
 
 ### Ejemplos en aplicaciones comunes:
